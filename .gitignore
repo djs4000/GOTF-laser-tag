@@ -1,0 +1,28 @@
+# Build artifacts
+bin/
+obj/
+
+# User-specific
+*.user
+*.suo
+
+# Logs
+*.log
+logs/
+
+# Visual Studio
+.vs/
+
+# Publish output
+*.exe
+*.pdb
+*.appx
+*.msix
+
+# Resharper and Rider
+_ReSharper.Caches/
+*.DotSettings.user
+
+# Other
+TestResults/
+*.cache

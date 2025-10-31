@@ -6,6 +6,8 @@ using LaserTag.Defusal.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
+using Timer = System.Windows.Forms.Timer;
+
 namespace LaserTag.Defusal.Ui;
 
 /// <summary>
