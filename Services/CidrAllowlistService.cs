@@ -1,3 +1,4 @@
+using System;
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
@@ -19,7 +20,8 @@ public sealed class CidrAllowlistService
     {
         _logger = logger;
         _options = options.Value;
-        foreach (var cidr in _options.AllowedCidrs)
+        var cidrs = _options.AllowedCidrs ?? Array.Empty<string>();
+        foreach (var cidr in cidrs)
         {
             if (TryParseCidr(cidr, out var network, out var mask))
             {

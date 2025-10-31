@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Drawing;
 using System.Threading;
 using System.Windows.Forms;
@@ -5,8 +6,6 @@ using LaserTag.Defusal.Domain;
 using LaserTag.Defusal.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-
-using Timer = System.Windows.Forms.Timer;
 
 namespace LaserTag.Defusal.Ui;
 
@@ -18,7 +17,7 @@ public sealed class StatusForm : Form
     private readonly MatchCoordinator _coordinator;
     private readonly ILogger<StatusForm> _logger;
     private readonly IFocusService _focusService;
-    private readonly Timer _refreshTimer;
+    private readonly System.Windows.Forms.Timer _refreshTimer;
     private MatchStateSnapshot _snapshot = MatchStateSnapshot.Default;
 
     private readonly Label _matchLabel = new();
@@ -30,6 +29,8 @@ public sealed class StatusForm : Form
     private readonly Label _focusLabel = new();
     private readonly Label _actionLabel = new();
 
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     internal bool AllowClose { get; set; }
 
     public StatusForm(MatchCoordinator coordinator, IFocusService focusService, IOptions<MatchOptions> options, ILogger<StatusForm> logger)
@@ -70,7 +71,7 @@ public sealed class StatusForm : Form
         Controls.Add(layout);
 
         var refreshInterval = Math.Max(100, 1000 / Math.Max(1, options.Value.ClockExpectedHz));
-        _refreshTimer = new Timer { Interval = refreshInterval };
+        _refreshTimer = new System.Windows.Forms.Timer { Interval = refreshInterval };
         _refreshTimer.Tick += (_, _) => RenderSnapshot();
         _refreshTimer.Start();
 
