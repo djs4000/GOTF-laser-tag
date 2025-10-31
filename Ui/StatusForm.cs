@@ -18,7 +18,9 @@ public sealed class StatusForm : Form
     private readonly ILogger<StatusForm> _logger;
     private readonly IFocusService _focusService;
     private readonly System.Windows.Forms.Timer _refreshTimer;
+    private readonly System.Windows.Forms.Timer _focusTimer;
     private MatchStateSnapshot _snapshot = MatchStateSnapshot.Default;
+    private FocusWindowInfo _focusWindowInfo = FocusWindowInfo.Empty;
 
     private readonly Label _matchLabel = new();
     private readonly Label _stateLabel = new();
@@ -74,6 +76,10 @@ public sealed class StatusForm : Form
         _refreshTimer = new System.Windows.Forms.Timer { Interval = refreshInterval };
         _refreshTimer.Tick += (_, _) => RenderSnapshot();
         _refreshTimer.Start();
+
+        _focusTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+        _focusTimer.Tick += OnFocusTimerTick;
+        _focusTimer.Start();
 
         _coordinator.SnapshotUpdated += OnSnapshotUpdated;
         RenderSnapshot();
@@ -149,8 +155,7 @@ public sealed class StatusForm : Form
             ? $"Latency {snapshot.LastClockLatency.Value.TotalMilliseconds:F0} ms"
             : "Latency —";
 
-        _focusLabel.Text = snapshot.FocusAcquired ? "Target in focus" : "Awaiting focus";
-        _focusLabel.ForeColor = snapshot.FocusAcquired ? Color.DarkGreen : Color.DarkRed;
+        UpdateFocusLabel();
 
         _actionLabel.Text = snapshot.LastActionDescription;
 
@@ -190,6 +195,7 @@ public sealed class StatusForm : Form
         {
             _coordinator.SnapshotUpdated -= OnSnapshotUpdated;
             _refreshTimer.Dispose();
+            _focusTimer.Dispose();
         }
 
         base.Dispose(disposing);
@@ -205,5 +211,45 @@ public sealed class StatusForm : Form
         }
 
         base.OnFormClosing(e);
+    }
+    
+    private void OnFocusTimerTick(object? sender, EventArgs e)
+    {
+        try
+        {
+            _focusWindowInfo = _focusService.GetForegroundWindowInfo();
+            RenderSnapshot();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to poll foreground window info");
+        }
+    }
+
+    private void UpdateFocusLabel()
+    {
+        var info = _focusWindowInfo;
+        if (info.IsTargetForeground)
+        {
+            var title = string.IsNullOrWhiteSpace(info.WindowTitle)
+                ? $"0x{info.Handle.ToInt64():X}"
+                : info.WindowTitle;
+            _focusLabel.Text = $"Target in focus ({title})";
+            _focusLabel.ForeColor = Color.DarkGreen;
+            return;
+        }
+
+        if (info.Handle != IntPtr.Zero)
+        {
+            var title = string.IsNullOrWhiteSpace(info.WindowTitle)
+                ? $"0x{info.Handle.ToInt64():X}"
+                : info.WindowTitle;
+            _focusLabel.Text = $"Foreground: {title}";
+            _focusLabel.ForeColor = Color.DarkRed;
+            return;
+        }
+
+        _focusLabel.Text = "Awaiting focus";
+        _focusLabel.ForeColor = Color.DarkRed;
     }
 }

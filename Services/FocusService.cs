@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.RegularExpressions;
 using LaserTag.Defusal.Domain;
 using LaserTag.Defusal.Interop;
@@ -17,6 +18,7 @@ public sealed class FocusService : IFocusService
     private readonly ILogger<FocusService> _logger;
     private readonly UiAutomationOptions _options;
     private readonly Regex _titleRegex;
+    private readonly string _targetProcessName;
     private SynchronizationContext? _uiContext;
 
     public FocusService(IOptions<UiAutomationOptions> options, ILogger<FocusService> logger)
@@ -24,6 +26,7 @@ public sealed class FocusService : IFocusService
         _logger = logger;
         _options = options.Value;
         _titleRegex = new Regex(_options.WindowTitleRegex, RegexOptions.Compiled | RegexOptions.IgnoreCase);
+        _targetProcessName = Path.GetFileNameWithoutExtension(_options.ProcessName);
     }
 
     /// <summary>
@@ -119,9 +122,40 @@ public sealed class FocusService : IFocusService
         }
     }
 
+    public FocusWindowInfo GetForegroundWindowInfo()
+    {
+        var foregroundHandle = NativeMethods.GetForegroundWindow();
+        if (foregroundHandle == IntPtr.Zero)
+        {
+            return FocusWindowInfo.Empty;
+        }
+
+        var title = ReadWindowTitle(foregroundHandle);
+        var isTarget = false;
+
+        try
+        {
+            NativeMethods.GetWindowThreadProcessId(foregroundHandle, out var processId);
+            if (processId != 0)
+            {
+                using var process = Process.GetProcessById((int)processId);
+                if (string.Equals(process.ProcessName, _targetProcessName, StringComparison.OrdinalIgnoreCase))
+                {
+                    isTarget = !string.IsNullOrEmpty(title) && _titleRegex.IsMatch(title);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to resolve foreground process info for handle {Handle}", foregroundHandle);
+        }
+
+        return new FocusWindowInfo(foregroundHandle, title, isTarget);
+    }
+
     private Process? FindTargetProcess()
     {
-        var candidates = Process.GetProcessesByName(Path.GetFileNameWithoutExtension(_options.ProcessName));
+        var candidates = Process.GetProcessesByName(_targetProcessName);
         foreach (var process in candidates)
         {
             try
@@ -144,6 +178,20 @@ public sealed class FocusService : IFocusService
         }
 
         return null;
+    }
+
+    private static string? ReadWindowTitle(IntPtr handle)
+    {
+        var length = NativeMethods.GetWindowTextLength(handle);
+        if (length <= 0)
+        {
+            return null;
+        }
+
+        var buffer = new StringBuilder(length + 1);
+        return NativeMethods.GetWindowText(handle, buffer, buffer.Capacity) > 0
+            ? buffer.ToString()
+            : null;
     }
 
     private static void SendShortcut()

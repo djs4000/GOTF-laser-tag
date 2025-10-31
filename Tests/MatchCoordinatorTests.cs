@@ -133,5 +133,10 @@ public class MatchCoordinatorTests
             LastReason = reason;
             return Task.FromResult(new FocusActionResult(true, reason));
         }
+
+        public FocusWindowInfo GetForegroundWindowInfo()
+        {
+            return FocusWindowInfo.Empty;
+        }
     }
 }
