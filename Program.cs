@@ -4,6 +4,8 @@ using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Windows.Forms;
 using LaserTag.Defusal.Domain;
 using LaserTag.Defusal.Http;
@@ -54,6 +56,12 @@ internal static class Program
             {
                 configuration.WriteTo.File(diagnostics.LogPath, rollingInterval: RollingInterval.Day, retainedFileCountLimit: 7);
             }
+        });
+
+        builder.Services.ConfigureHttpJsonOptions(options =>
+        {
+            options.SerializerOptions.PropertyNameCaseInsensitive = true;
+            options.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false));
         });
 
         builder.Services.AddSingleton<CidrAllowlistService>();
