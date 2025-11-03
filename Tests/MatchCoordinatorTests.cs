@@ -134,6 +134,12 @@ public class MatchCoordinatorTests
             return Task.FromResult(new FocusActionResult(true, reason));
         }
 
+        public Task<FocusActionResult> TryFocusWindowAsync(string reason, CancellationToken cancellationToken)
+        {
+            LastReason = reason;
+            return Task.FromResult(new FocusActionResult(true, reason));
+        }
+
         public FocusWindowInfo GetForegroundWindowInfo()
         {
             return FocusWindowInfo.Empty;

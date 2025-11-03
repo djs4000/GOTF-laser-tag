@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
@@ -83,13 +84,17 @@ internal static class Program
         app.MapPut("/prop/status", async (PropStatusDto dto, MatchCoordinator coordinator, CancellationToken cancellationToken) =>
         {
             await coordinator.UpdatePropAsync(dto, cancellationToken).ConfigureAwait(false);
-            return Results.Accepted();
+            return Results.Accepted()
+                .WithHeader("X-Defusal-Ack", "prop-status")
+                .WithHeader("X-Defusal-Received-At", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture));
         });
 
         app.MapPut("/match/clock", async (MatchClockDto dto, MatchCoordinator coordinator, CancellationToken cancellationToken) =>
         {
             await coordinator.UpdateMatchClockAsync(dto, cancellationToken).ConfigureAwait(false);
-            return Results.Accepted();
+            return Results.Accepted()
+                .WithHeader("X-Defusal-Ack", "match-clock")
+                .WithHeader("X-Defusal-Received-At", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture));
         });
 
         app.MapGet("/healthz", () => Results.Ok(new

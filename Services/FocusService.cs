@@ -3,6 +3,8 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using LaserTag.Defusal.Domain;
 using LaserTag.Defusal.Interop;
 using Microsoft.Extensions.Logging;
@@ -42,6 +44,16 @@ public sealed class FocusService : IFocusService
     /// </summary>
     public Task<FocusActionResult> TryEndMatchAsync(string reason, CancellationToken cancellationToken)
     {
+        return DispatchAsync(reason, sendShortcut: true, cancellationToken);
+    }
+
+    public Task<FocusActionResult> TryFocusWindowAsync(string reason, CancellationToken cancellationToken)
+    {
+        return DispatchAsync(reason, sendShortcut: false, cancellationToken);
+    }
+
+    private Task<FocusActionResult> DispatchAsync(string reason, bool sendShortcut, CancellationToken cancellationToken)
+    {
         if (_uiContext is { } context && SynchronizationContext.Current != context)
         {
             var tcs = new TaskCompletionSource<FocusActionResult>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -49,7 +61,7 @@ public sealed class FocusService : IFocusService
             {
                 try
                 {
-                    var result = await ExecuteAsync(reason, cancellationToken).ConfigureAwait(true);
+                    var result = await ExecuteAsync(reason, sendShortcut, cancellationToken).ConfigureAwait(true);
                     tcs.TrySetResult(result);
                 }
                 catch (Exception ex)
@@ -60,10 +72,10 @@ public sealed class FocusService : IFocusService
             return tcs.Task;
         }
 
-        return ExecuteAsync(reason, cancellationToken);
+        return ExecuteAsync(reason, sendShortcut, cancellationToken);
     }
 
-    private async Task<FocusActionResult> ExecuteAsync(string reason, CancellationToken cancellationToken)
+    private async Task<FocusActionResult> ExecuteAsync(string reason, bool sendShortcut, CancellationToken cancellationToken)
     {
         var targetProcess = FindTargetProcess();
         if (targetProcess is null || targetProcess.MainWindowHandle == IntPtr.Zero)
@@ -101,12 +113,22 @@ public sealed class FocusService : IFocusService
             }
 
             await Task.Delay(_options.PostShortcutDelayMs, cancellationToken).ConfigureAwait(true);
-            SendShortcut();
-            await Task.Delay(_options.PostShortcutDelayMs, cancellationToken).ConfigureAwait(true);
 
-            var description = $"Sent Ctrl+F at {DateTimeOffset.Now:HH:mm:ss}";
-            _logger.LogInformation("{Description} due to {Reason}", description, reason);
-            return new FocusActionResult(true, description);
+            if (sendShortcut)
+            {
+                SendShortcut();
+                await Task.Delay(_options.PostShortcutDelayMs, cancellationToken).ConfigureAwait(true);
+
+                var description = $"Sent Ctrl+F at {DateTimeOffset.Now:HH:mm:ss}";
+                _logger.LogInformation("{Description} due to {Reason}", description, reason);
+                return new FocusActionResult(true, description);
+            }
+            else
+            {
+                var description = $"Focused target window at {DateTimeOffset.Now:HH:mm:ss}";
+                _logger.LogInformation("{Description} ({Reason})", description, reason);
+                return new FocusActionResult(true, description);
+            }
         }
         finally
         {

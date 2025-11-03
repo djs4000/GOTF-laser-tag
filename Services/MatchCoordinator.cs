@@ -18,7 +18,7 @@ public sealed class MatchCoordinator
     private readonly object _sync = new();
 
     private MatchLifecycleState _lifecycleState = MatchLifecycleState.Freezetime;
-    private PropState _propState = PropState.Armed;
+    private PropState _propState = PropState.Idle;
     private double? _plantTimeSec;
     private bool _matchEnded;
     private string? _currentMatchId;
@@ -159,9 +159,13 @@ public sealed class MatchCoordinator
                 case MatchClockStatus.Freezetime:
                     _lifecycleState = MatchLifecycleState.Freezetime;
                     _plantTimeSec = null;
-                    _propState = PropState.Armed;
+                    _propState = PropState.Idle;
                     break;
                 case MatchClockStatus.Live:
+                    if (_propState == PropState.Idle)
+                    {
+                        _propState = PropState.Armed;
+                    }
                     _lifecycleState = MatchLifecycleState.Live;
                     EvaluateLiveState(ref shouldTriggerEnd, ref triggerReason);
                     break;
@@ -208,6 +212,7 @@ public sealed class MatchCoordinator
         lock (_sync)
         {
             ResetForNewMatch(matchId ?? $"manual-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}");
+            _propState = PropState.Armed;
             _lifecycleState = MatchLifecycleState.Live;
             PublishSnapshotLocked("Manual start");
         }
@@ -303,7 +308,7 @@ public sealed class MatchCoordinator
     {
         _logger.LogInformation("Switching to match {MatchId}", matchId);
         _currentMatchId = matchId;
-        _propState = PropState.Armed;
+        _propState = PropState.Idle;
         _plantTimeSec = null;
         _matchEnded = false;
         _lastPropTimestamp = 0;
