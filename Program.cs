@@ -1,4 +1,11 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net;
+using System.Net.NetworkInformation;
 using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Windows.Forms;
 using LaserTag.Defusal.Domain;
 using LaserTag.Defusal.Http;
@@ -51,6 +58,12 @@ internal static class Program
             }
         });
 
+        builder.Services.ConfigureHttpJsonOptions(options =>
+        {
+            options.SerializerOptions.PropertyNameCaseInsensitive = true;
+            options.SerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false));
+        });
+
         builder.Services.AddSingleton<CidrAllowlistService>();
         builder.Services.AddSingleton<RelayService>();
         builder.Services.AddSingleton<MatchCoordinator>();
@@ -59,12 +72,9 @@ internal static class Program
         builder.Services.AddSingleton<TrayApplicationContext>();
 
         var httpOptions = builder.Configuration.GetSection("Http").Get<HttpOptions>() ?? new HttpOptions();
-        if (httpOptions.Urls.Length == 0)
-        {
-            httpOptions.Urls = new[] { "http://127.0.0.1:5055" };
-        }
-
-        builder.WebHost.UseUrls(httpOptions.Urls);
+        var resolvedUrls = ResolveBindableUrls(httpOptions);
+        builder.WebHost.UseUrls(resolvedUrls);
+        Console.WriteLine($"[config] Binding HTTP server to: {string.Join(", ", resolvedUrls)}");
 
         var app = builder.Build();
 
@@ -100,5 +110,76 @@ internal static class Program
         await serverTask.ConfigureAwait(false);
         await app.DisposeAsync();
         Log.CloseAndFlush();
+    }
+
+    private static string[] ResolveBindableUrls(HttpOptions httpOptions)
+    {
+        static HashSet<IPAddress> GetActiveUnicastAddresses()
+        {
+            var addresses = new HashSet<IPAddress>();
+
+            foreach (var networkInterface in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (networkInterface.OperationalStatus != OperationalStatus.Up)
+                {
+                    continue;
+                }
+
+                foreach (var unicast in networkInterface.GetIPProperties().UnicastAddresses)
+                {
+                    addresses.Add(unicast.Address);
+                }
+            }
+
+            return addresses;
+        }
+
+        static bool IsBindable(IPAddress address, HashSet<IPAddress> activeAddresses)
+        {
+            if (IPAddress.IsLoopback(address))
+            {
+                return true;
+            }
+
+            if (IPAddress.Any.Equals(address) || IPAddress.IPv6Any.Equals(address))
+            {
+                return true;
+            }
+
+            return activeAddresses.Contains(address);
+        }
+
+        var configuredUrls = httpOptions.Urls ?? Array.Empty<string>();
+        var activeAddresses = GetActiveUnicastAddresses();
+        var validUrls = new List<string>();
+
+        foreach (var configuredUrl in configuredUrls.Where(u => !string.IsNullOrWhiteSpace(u)))
+        {
+            if (!Uri.TryCreate(configuredUrl, UriKind.Absolute, out var uri) || string.IsNullOrWhiteSpace(uri.Host))
+            {
+                Console.WriteLine($"[config] Ignoring invalid HTTP Url '{configuredUrl}'.");
+                continue;
+            }
+
+            if (IPAddress.TryParse(uri.Host, out var ipAddress))
+            {
+                if (!IsBindable(ipAddress, activeAddresses))
+                {
+                    Console.WriteLine($"[config] Skipping HTTP Url '{configuredUrl}' because {ipAddress} is not assigned to this machine.");
+                    continue;
+                }
+            }
+
+            validUrls.Add(configuredUrl);
+        }
+
+        if (validUrls.Count == 0)
+        {
+            const string fallback = "http://127.0.0.1:5055";
+            Console.WriteLine($"[config] No valid HTTP Urls configured. Falling back to '{fallback}'.");
+            validUrls.Add(fallback);
+        }
+
+        return validUrls.ToArray();
     }
 }
