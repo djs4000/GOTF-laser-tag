@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
@@ -80,15 +81,17 @@ internal static class Program
 
         app.UseMiddleware<SecurityMiddleware>();
 
-        app.MapPut("/prop/status", async (PropStatusDto dto, MatchCoordinator coordinator, CancellationToken cancellationToken) =>
+        app.MapPut("/prop/status", async (PropStatusDto dto, MatchCoordinator coordinator, HttpContext httpContext, CancellationToken cancellationToken) =>
         {
             await coordinator.UpdatePropAsync(dto, cancellationToken).ConfigureAwait(false);
+            StampAckHeaders(httpContext.Response, "prop-status");
             return Results.Accepted();
         });
 
-        app.MapPut("/match/clock", async (MatchClockDto dto, MatchCoordinator coordinator, CancellationToken cancellationToken) =>
+        app.MapPut("/match/clock", async (MatchClockDto dto, MatchCoordinator coordinator, HttpContext httpContext, CancellationToken cancellationToken) =>
         {
             await coordinator.UpdateMatchClockAsync(dto, cancellationToken).ConfigureAwait(false);
+            StampAckHeaders(httpContext.Response, "match-clock");
             return Results.Accepted();
         });
 
@@ -181,5 +184,13 @@ internal static class Program
         }
 
         return validUrls.ToArray();
+    }
+
+    private static void StampAckHeaders(HttpResponse response, string ackValue)
+    {
+        response.Headers["X-Defusal-Ack"] = ackValue;
+        response.Headers["X-Defusal-Received-At"] = DateTimeOffset.UtcNow
+            .ToUnixTimeSeconds()
+            .ToString(CultureInfo.InvariantCulture);
     }
 }

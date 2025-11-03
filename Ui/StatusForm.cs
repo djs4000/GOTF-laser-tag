@@ -30,6 +30,7 @@ public sealed class StatusForm : Form
     private readonly Label _latencyLabel = new();
     private readonly Label _focusLabel = new();
     private readonly Label _actionLabel = new();
+    private readonly Button _focusButton = new();
 
     [Browsable(false)]
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -67,7 +68,7 @@ public sealed class StatusForm : Form
         AddRow(layout, "Prop", _propLabel);
         AddRow(layout, "Plant", _plantLabel);
         AddRow(layout, "Clock", _latencyLabel);
-        AddRow(layout, "Focus", _focusLabel);
+        AddRow(layout, "Focus", CreateFocusPanel());
         AddRow(layout, "Last", _actionLabel);
 
         Controls.Add(layout);
@@ -107,6 +108,28 @@ public sealed class StatusForm : Form
 
         panel.Controls.Add(_stateLabel);
         panel.Controls.Add(_overtimeLabel);
+        return panel;
+    }
+
+    private Control CreateFocusPanel()
+    {
+        var panel = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.LeftToRight
+        };
+
+        _focusLabel.AutoSize = true;
+
+        _focusButton.AutoSize = true;
+        _focusButton.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        _focusButton.Margin = new Padding(8, 0, 0, 0);
+        _focusButton.Text = "Focus window";
+        _focusButton.Click += OnFocusButtonClick;
+
+        panel.Controls.Add(_focusLabel);
+        panel.Controls.Add(_focusButton);
         return panel;
     }
 
@@ -251,5 +274,31 @@ public sealed class StatusForm : Form
 
         _focusLabel.Text = "Awaiting focus";
         _focusLabel.ForeColor = Color.DarkRed;
+    }
+
+    private async void OnFocusButtonClick(object? sender, EventArgs e)
+    {
+        try
+        {
+            _focusButton.Enabled = false;
+            var result = await _focusService.TryFocusWindowAsync("Manual focus", CancellationToken.None).ConfigureAwait(true);
+            var description = result.FocusAcquired
+                ? $"Manual focus succeeded: {result.Description}"
+                : $"Manual focus failed: {result.Description}";
+            _coordinator.ReportFocusResult(result.FocusAcquired, description);
+            if (!result.FocusAcquired)
+            {
+                _logger.LogWarning("Manual focus failed: {Description}", result.Description);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Manual focus attempt threw an exception");
+            _coordinator.ReportFocusResult(false, "Manual focus encountered an error");
+        }
+        finally
+        {
+            _focusButton.Enabled = true;
+        }
     }
 }
