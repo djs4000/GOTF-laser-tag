@@ -5,7 +5,7 @@ namespace LaserTag.Defusal.Domain;
 /// </summary>
 public sealed class HttpOptions
 {
-    public string[] Urls { get; set; } = ["http://127.0.0.1:5055"];
+    public string[] Urls { get; set; } = [""];
 
     public string? BearerToken { get; set; }
 
