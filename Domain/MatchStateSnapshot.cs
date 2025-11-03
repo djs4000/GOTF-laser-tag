@@ -19,7 +19,7 @@ public sealed record MatchStateSnapshot(
     public static readonly MatchStateSnapshot Default = new(
         MatchId: null,
         LifecycleState: MatchLifecycleState.Freezetime,
-        PropState: PropState.Armed,
+        PropState: PropState.Idle,
         PlantTimeSec: null,
         IsOvertime: false,
         OvertimeRemainingSec: null,

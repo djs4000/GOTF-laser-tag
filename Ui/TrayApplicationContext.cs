@@ -31,6 +31,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         };
 
         _notifyIcon.DoubleClick += (_, _) => ShowWindow();
+
+        ShowWindow();
     }
 
     private ContextMenuStrip BuildContextMenu()

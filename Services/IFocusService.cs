@@ -11,6 +11,8 @@ public interface IFocusService
 
     Task<FocusActionResult> TryEndMatchAsync(string reason, CancellationToken cancellationToken);
 
+    Task<FocusActionResult> TryFocusWindowAsync(string reason, CancellationToken cancellationToken);
+
     FocusWindowInfo GetForegroundWindowInfo();
 }
 

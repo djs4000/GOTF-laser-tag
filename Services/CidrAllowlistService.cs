@@ -67,7 +67,7 @@ public sealed class CidrAllowlistService
             return false;
         }
 
-        if (!IPAddress.TryParse(parts[0], out network))
+        if (!IPAddress.TryParse(parts[0], out var parsedNetwork) || parsedNetwork is null)
         {
             return false;
         }
@@ -77,7 +77,7 @@ public sealed class CidrAllowlistService
             return false;
         }
 
-        if (network.AddressFamily != AddressFamily.InterNetwork)
+        if (parsedNetwork.AddressFamily != AddressFamily.InterNetwork)
         {
             return false;
         }
@@ -88,6 +88,7 @@ public sealed class CidrAllowlistService
         }
 
         mask = PrefixToMask(prefixLength);
+        network = parsedNetwork;
         return true;
     }
 
