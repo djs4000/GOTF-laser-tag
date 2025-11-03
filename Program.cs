@@ -81,20 +81,18 @@ internal static class Program
 
         app.UseMiddleware<SecurityMiddleware>();
 
-        app.MapPut("/prop/status", async (PropStatusDto dto, MatchCoordinator coordinator, CancellationToken cancellationToken) =>
+        app.MapPut("/prop/status", async (PropStatusDto dto, MatchCoordinator coordinator, HttpContext httpContext, CancellationToken cancellationToken) =>
         {
             await coordinator.UpdatePropAsync(dto, cancellationToken).ConfigureAwait(false);
-            return Results.Accepted()
-                .WithHeader("X-Defusal-Ack", "prop-status")
-                .WithHeader("X-Defusal-Received-At", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture));
+            StampAckHeaders(httpContext.Response, "prop-status");
+            return Results.Accepted();
         });
 
-        app.MapPut("/match/clock", async (MatchClockDto dto, MatchCoordinator coordinator, CancellationToken cancellationToken) =>
+        app.MapPut("/match/clock", async (MatchClockDto dto, MatchCoordinator coordinator, HttpContext httpContext, CancellationToken cancellationToken) =>
         {
             await coordinator.UpdateMatchClockAsync(dto, cancellationToken).ConfigureAwait(false);
-            return Results.Accepted()
-                .WithHeader("X-Defusal-Ack", "match-clock")
-                .WithHeader("X-Defusal-Received-At", DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture));
+            StampAckHeaders(httpContext.Response, "match-clock");
+            return Results.Accepted();
         });
 
         app.MapGet("/healthz", () => Results.Ok(new
@@ -186,5 +184,13 @@ internal static class Program
         }
 
         return validUrls.ToArray();
+    }
+
+    private static void StampAckHeaders(HttpResponse response, string ackValue)
+    {
+        response.Headers["X-Defusal-Ack"] = ackValue;
+        response.Headers["X-Defusal-Received-At"] = DateTimeOffset.UtcNow
+            .ToUnixTimeSeconds()
+            .ToString(CultureInfo.InvariantCulture);
     }
 }
