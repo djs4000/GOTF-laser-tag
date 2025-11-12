@@ -69,28 +69,30 @@ internal static class Program
         builder.Services.AddSingleton<RelayService>();
         builder.Services.AddSingleton<MatchCoordinator>();
         builder.Services.AddSingleton<IFocusService, FocusService>();
-        builder.Services.AddSingleton<StatusForm>();
-        builder.Services.AddSingleton<TrayApplicationContext>();
 
         var httpOptions = builder.Configuration.GetSection("Http").Get<HttpOptions>() ?? new HttpOptions();
         var resolvedUrls = ResolveBindableUrls(httpOptions);
         builder.WebHost.UseUrls(resolvedUrls);
         Console.WriteLine($"[config] Binding HTTP server to: {string.Join(", ", resolvedUrls)}");
 
+        builder.Services.AddSingleton(new HttpEndpointMetadata(resolvedUrls));
+        builder.Services.AddSingleton<StatusForm>();
+        builder.Services.AddSingleton<TrayApplicationContext>();
+
         var app = builder.Build();
 
         app.UseMiddleware<SecurityMiddleware>();
 
-        app.MapPut("/prop/status", async (PropStatusDto dto, MatchCoordinator coordinator, HttpContext httpContext, CancellationToken cancellationToken) =>
+        app.MapPost("/prop", async (PropStatusDto dto, MatchCoordinator coordinator, HttpContext httpContext, CancellationToken cancellationToken) =>
         {
             await coordinator.UpdatePropAsync(dto, cancellationToken).ConfigureAwait(false);
             StampAckHeaders(httpContext.Response, "prop-status");
             return Results.Accepted();
         });
 
-        app.MapPut("/match/clock", async (MatchClockDto dto, MatchCoordinator coordinator, HttpContext httpContext, CancellationToken cancellationToken) =>
+        app.MapPost("/match", async (MatchSnapshotDto dto, MatchCoordinator coordinator, HttpContext httpContext, CancellationToken cancellationToken) =>
         {
-            await coordinator.UpdateMatchClockAsync(dto, cancellationToken).ConfigureAwait(false);
+            await coordinator.UpdateMatchSnapshotAsync(dto, cancellationToken).ConfigureAwait(false);
             StampAckHeaders(httpContext.Response, "match-clock");
             return Results.Accepted();
         });
