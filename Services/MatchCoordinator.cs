@@ -23,7 +23,7 @@ public sealed class MatchCoordinator
     private bool _matchEnded;
     private string? _currentMatchId;
     private long _lastPropTimestamp;
-    private long _lastClockTimestamp;
+    private long _lastSnapshotTimestamp;
     private double _lastElapsedSec;
     private DateTimeOffset? _lastClockUpdate;
     private DateTimeOffset? _lastPropUpdate;
@@ -32,7 +32,7 @@ public sealed class MatchCoordinator
     private bool _focusAcquired;
     private DateTimeOffset _lastAutomationAt = DateTimeOffset.MinValue;
     private PropStatusDto? _lastPropPayload;
-    private MatchClockDto? _lastClockPayload;
+    private MatchSnapshotDto? _lastSnapshotPayload;
 
     public event EventHandler<MatchStateSnapshot>? SnapshotUpdated;
 
@@ -115,9 +115,9 @@ public sealed class MatchCoordinator
     }
 
     /// <summary>
-    /// Applies a new match clock update.
+    /// Applies a new match snapshot update.
     /// </summary>
-    public async Task<MatchStateSnapshot> UpdateMatchClockAsync(MatchClockDto dto, CancellationToken cancellationToken)
+    public async Task<MatchStateSnapshot> UpdateMatchSnapshotAsync(MatchSnapshotDto dto, CancellationToken cancellationToken)
     {
         bool shouldTriggerEnd = false;
         string? triggerReason = null;
@@ -125,7 +125,16 @@ public sealed class MatchCoordinator
         lock (_sync)
         {
             var now = DateTimeOffset.UtcNow;
-            var sourceTimestamp = DateTimeOffset.FromUnixTimeSeconds(dto.Timestamp);
+            DateTimeOffset sourceTimestamp;
+            try
+            {
+                sourceTimestamp = new DateTimeOffset(new DateTime(dto.Timestamp, DateTimeKind.Utc));
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                _logger.LogWarning("Match snapshot timestamp {Timestamp} is out of range", dto.Timestamp);
+                sourceTimestamp = now;
+            }
             _lastClockLatency = now - sourceTimestamp;
 
             if (!string.Equals(_currentMatchId, dto.Id, StringComparison.Ordinal))
@@ -138,15 +147,15 @@ public sealed class MatchCoordinator
                 return CurrentSnapshot;
             }
 
-            if (dto.Timestamp < _lastClockTimestamp)
+            if (dto.Timestamp < _lastSnapshotTimestamp)
             {
-                _logger.LogWarning("Out-of-order clock payload ignored (timestamp {Timestamp})", dto.Timestamp);
+                _logger.LogWarning("Out-of-order match payload ignored (timestamp {Timestamp})", dto.Timestamp);
                 return CurrentSnapshot;
             }
 
-            _lastClockTimestamp = dto.Timestamp;
+            _lastSnapshotTimestamp = dto.Timestamp;
             _lastClockUpdate = now;
-            _lastClockPayload = dto;
+            _lastSnapshotPayload = dto;
 
             _lastElapsedSec = _matchOptions.LtDisplayedDurationSec - (dto.RemainingTimeMs / 1000.0);
             if (_lastElapsedSec < 0)
@@ -156,12 +165,13 @@ public sealed class MatchCoordinator
 
             switch (dto.Status)
             {
-                case MatchClockStatus.Freezetime:
+                case MatchSnapshotStatus.WaitingOnStart:
+                case MatchSnapshotStatus.Countdown:
                     _lifecycleState = MatchLifecycleState.Freezetime;
                     _plantTimeSec = null;
                     _propState = PropState.Idle;
                     break;
-                case MatchClockStatus.Live:
+                case MatchSnapshotStatus.Running:
                     if (_propState == PropState.Idle)
                     {
                         _propState = PropState.Armed;
@@ -169,13 +179,20 @@ public sealed class MatchCoordinator
                     _lifecycleState = MatchLifecycleState.Live;
                     EvaluateLiveState(ref shouldTriggerEnd, ref triggerReason);
                     break;
-                case MatchClockStatus.Gameover:
+                case MatchSnapshotStatus.WaitingOnFinalData:
+                case MatchSnapshotStatus.Completed:
+                case MatchSnapshotStatus.Cancelled:
                     _lifecycleState = MatchLifecycleState.Gameover;
                     _matchEnded = true;
                     break;
             }
 
-            PublishSnapshotLocked("Clock update");
+            if (dto.IsLastSend)
+            {
+                _matchEnded = true;
+            }
+
+            PublishSnapshotLocked("Match update");
         }
 
         if (shouldTriggerEnd)
@@ -295,7 +312,7 @@ public sealed class MatchCoordinator
             {
                 match = _currentMatchId,
                 prop = _lastPropPayload,
-                clock = _lastClockPayload,
+                clock = _lastSnapshotPayload,
                 fsm = snapshot
             };
             _ = _relayService.TryRelayAsync(relayPayload, CancellationToken.None);
@@ -312,12 +329,12 @@ public sealed class MatchCoordinator
         _plantTimeSec = null;
         _matchEnded = false;
         _lastPropTimestamp = 0;
-        _lastClockTimestamp = 0;
+        _lastSnapshotTimestamp = 0;
         _lastElapsedSec = 0;
         _lastActionDescription = "New match";
         _focusAcquired = false;
         _lastPropPayload = null;
-        _lastClockPayload = null;
+        _lastSnapshotPayload = null;
     }
 
     private async Task TriggerEndMatchAsync(string reason, CancellationToken cancellationToken)

@@ -1,5 +1,7 @@
+using System;
 using System.ComponentModel;
 using System.Drawing;
+using System.Linq;
 using System.Threading;
 using System.Windows.Forms;
 using LaserTag.Defusal.Domain;
@@ -23,6 +25,7 @@ public sealed class StatusForm : Form
     private FocusWindowInfo _focusWindowInfo = FocusWindowInfo.Empty;
 
     private readonly Label _matchLabel = new();
+    private readonly Label _httpLabel = new();
     private readonly Label _stateLabel = new();
     private readonly Label _overtimeLabel = new();
     private readonly Label _propLabel = new();
@@ -36,7 +39,12 @@ public sealed class StatusForm : Form
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     internal bool AllowClose { get; set; }
 
-    public StatusForm(MatchCoordinator coordinator, IFocusService focusService, IOptions<MatchOptions> options, ILogger<StatusForm> logger)
+    public StatusForm(
+        MatchCoordinator coordinator,
+        IFocusService focusService,
+        IOptions<MatchOptions> options,
+        HttpEndpointMetadata endpointMetadata,
+        ILogger<StatusForm> logger)
     {
         _coordinator = coordinator;
         _logger = logger;
@@ -54,7 +62,7 @@ public sealed class StatusForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 7,
+            RowCount = 8,
             Padding = new Padding(10),
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink
@@ -63,6 +71,8 @@ public sealed class StatusForm : Form
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
+        ConfigureHttpLabel(endpointMetadata);
+        AddRow(layout, "HTTP", _httpLabel);
         AddRow(layout, "Match", _matchLabel);
         AddRow(layout, "State", CreateStatePanel());
         AddRow(layout, "Prop", _propLabel);
@@ -247,6 +257,27 @@ public sealed class StatusForm : Form
         {
             _logger.LogDebug(ex, "Failed to poll foreground window info");
         }
+    }
+
+    private void ConfigureHttpLabel(HttpEndpointMetadata metadata)
+    {
+        if (metadata.Urls.Count == 0)
+        {
+            _httpLabel.Text = "—";
+            return;
+        }
+
+        var formatted = metadata.Urls
+            .Select(FormatEndpointDisplay)
+            .ToArray();
+        _httpLabel.Text = string.Join(Environment.NewLine, formatted);
+    }
+
+    private static string FormatEndpointDisplay(string url)
+    {
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            ? $"{uri.Host}:{uri.Port}"
+            : url;
     }
 
     private void UpdateFocusLabel()
