@@ -115,6 +115,25 @@ public sealed class MatchCoordinator
     }
 
     /// <summary>
+    /// Builds a lightweight response payload for prop status pings.
+    /// </summary>
+    public PropStatusResponseDto BuildPropStatusResponse(long requestTimestamp)
+    {
+        lock (_sync)
+        {
+            var status = _lastSnapshotPayload?.Status.ToString() ?? MatchSnapshotStatus.WaitingOnStart.ToString();
+            var remaining = _lastSnapshotPayload?.RemainingTimeMs ?? (_matchOptions.LtDisplayedDurationSec * 1000);
+
+            return new PropStatusResponseDto
+            {
+                Status = status,
+                RemainingTimeMs = remaining,
+                Timestamp = requestTimestamp
+            };
+        }
+    }
+
+    /// <summary>
     /// Applies a new match snapshot update.
     /// </summary>
     public async Task<MatchStateSnapshot> UpdateMatchSnapshotAsync(MatchSnapshotDto dto, CancellationToken cancellationToken)

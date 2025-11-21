@@ -90,6 +90,14 @@ internal static class Program
             return Results.Accepted();
         });
 
+        app.MapPost("/prop/status", (PropStatusPingDto dto, MatchCoordinator coordinator) =>
+        {
+            Console.WriteLine(
+                $"[prop/status] state={dto.State ?? "<null>"} timer={dto.Timer?.ToString(CultureInfo.InvariantCulture) ?? "<null>"} timestamp={dto.Timestamp}");
+            var response = coordinator.BuildPropStatusResponse(dto.Timestamp);
+            return Results.Ok(response);
+        });
+
         app.MapPost("/match", async (MatchSnapshotDto dto, MatchCoordinator coordinator, HttpContext httpContext, CancellationToken cancellationToken) =>
         {
             await coordinator.UpdateMatchSnapshotAsync(dto, cancellationToken).ConfigureAwait(false);
