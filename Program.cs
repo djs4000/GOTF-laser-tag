@@ -83,18 +83,15 @@ internal static class Program
 
         app.UseMiddleware<SecurityMiddleware>();
 
-        app.MapPost("/prop", async (PropStatusDto dto, MatchCoordinator coordinator, HttpContext httpContext, CancellationToken cancellationToken) =>
-        {
-            await coordinator.UpdatePropAsync(dto, cancellationToken).ConfigureAwait(false);
-            StampAckHeaders(httpContext.Response, "prop-status");
-            return Results.Accepted();
-        });
-
-        app.MapPost("/prop/status", (PropStatusPingDto dto, MatchCoordinator coordinator) =>
+        app.MapPost("/prop", async (PropStatusPingDto dto, MatchCoordinator coordinator, HttpContext httpContext, CancellationToken cancellationToken) =>
         {
             Console.WriteLine(
-                $"[prop/status] state={dto.State ?? "<null>"} timer={dto.Timer?.ToString(CultureInfo.InvariantCulture) ?? "<null>"} timestamp={dto.Timestamp}");
+                $"[prop] state={dto.State ?? "<null>"} timer={dto.Timer?.ToString(CultureInfo.InvariantCulture) ?? "<null>"} timestamp={dto.Timestamp}");
+
+            await coordinator.TryUpdatePropFromPingAsync(dto, cancellationToken).ConfigureAwait(false);
             var response = coordinator.BuildPropStatusResponse(dto.Timestamp);
+
+            StampAckHeaders(httpContext.Response, "prop-status");
             return Results.Ok(response);
         });
 

@@ -31,6 +31,7 @@ public sealed class MatchCoordinator
     private string _lastActionDescription = "Idle";
     private bool _focusAcquired;
     private DateTimeOffset _lastAutomationAt = DateTimeOffset.MinValue;
+    private string? _lastPropStatusSent;
     private PropStatusDto? _lastPropPayload;
     private MatchSnapshotDto? _lastSnapshotPayload;
 
@@ -115,7 +116,7 @@ public sealed class MatchCoordinator
     }
 
     /// <summary>
-    /// Builds a lightweight response payload for prop status pings.
+    /// Builds a lightweight response payload for prop status pings and records it for UI display.
     /// </summary>
     public PropStatusResponseDto BuildPropStatusResponse(long requestTimestamp)
     {
@@ -124,12 +125,34 @@ public sealed class MatchCoordinator
             var status = _lastSnapshotPayload?.Status.ToString() ?? MatchSnapshotStatus.WaitingOnStart.ToString();
             var remaining = _lastSnapshotPayload?.RemainingTimeMs ?? (_matchOptions.LtDisplayedDurationSec * 1000);
 
-            return new PropStatusResponseDto
+            var response = new PropStatusResponseDto
             {
                 Status = status,
                 RemainingTimeMs = remaining,
                 Timestamp = requestTimestamp
             };
+
+            _lastPropStatusSent = $"{response.Status} ({response.RemainingTimeMs} ms)";
+            PublishSnapshotLocked("Prop ping");
+
+            return response;
+        }
+    }
+
+    /// <summary>
+    /// Attempts to map a prop ping into a prop state update for the FSM.
+    /// </summary>
+    public async Task TryUpdatePropFromPingAsync(PropStatusPingDto dto, CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(dto.State) && Enum.TryParse<PropState>(dto.State, true, out var parsedState))
+        {
+            var mapped = new PropStatusDto
+            {
+                State = parsedState,
+                Timestamp = dto.Timestamp
+            };
+
+            await UpdatePropAsync(mapped, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -313,6 +336,7 @@ public sealed class MatchCoordinator
             MatchId: _currentMatchId,
             LifecycleState: _lifecycleState,
             PropState: _propState,
+            PropReplyStatus: _lastPropStatusSent,
             PlantTimeSec: _plantTimeSec,
             IsOvertime: overtimeActive,
             OvertimeRemainingSec: overtimeRemaining,

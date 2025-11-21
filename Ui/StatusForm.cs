@@ -178,7 +178,7 @@ public sealed class StatusForm : Form
         var snapshot = _snapshot;
         _matchLabel.Text = snapshot.MatchId ?? "—";
         _stateLabel.Text = snapshot.LifecycleState.ToString();
-        _propLabel.Text = snapshot.PropState.ToString();
+        _propLabel.Text = snapshot.PropReplyStatus ?? snapshot.PropState.ToString();
 
         _plantLabel.Text = snapshot.PlantTimeSec.HasValue
             ? $"{snapshot.PlantTimeSec.Value:F1}s"
