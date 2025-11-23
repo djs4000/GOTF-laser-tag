@@ -85,9 +85,16 @@ internal static class Program
 
         app.MapPost("/prop", async (PropStatusDto dto, MatchCoordinator coordinator, HttpContext httpContext, CancellationToken cancellationToken) =>
         {
-            await coordinator.UpdatePropAsync(dto, cancellationToken).ConfigureAwait(false);
+            var snapshot = await coordinator.UpdatePropAsync(dto, cancellationToken).ConfigureAwait(false);
             StampAckHeaders(httpContext.Response, "prop-status");
-            return Results.Accepted();
+            var response = new PropStatusResponseDto
+            {
+                Status = MapLifecycleForProp(snapshot.LifecycleState),
+                RemainingTimeMs = Math.Max(0, coordinator.LastKnownRemainingTimeMs ?? 0),
+                Timestamp = dto.Timestamp
+            };
+
+            return Results.Json(response);
         });
 
         app.MapPost("/match", async (MatchSnapshotDto dto, MatchCoordinator coordinator, HttpContext httpContext, CancellationToken cancellationToken) =>
@@ -186,6 +193,20 @@ internal static class Program
         }
 
         return validUrls.ToArray();
+    }
+
+    private static string MapLifecycleForProp(MatchLifecycleState state)
+    {
+        return state switch
+        {
+            MatchLifecycleState.WaitingOnStart => "WaitingOnStart",
+            MatchLifecycleState.Countdown => "Countdown",
+            MatchLifecycleState.Running => "Running",
+            MatchLifecycleState.WaitingOnFinalData => "WaitingOnFinalData",
+            MatchLifecycleState.Completed => "Completed",
+            MatchLifecycleState.Cancelled => "Cancelled",
+            _ => "Idle"
+        };
     }
 
     private static void StampAckHeaders(HttpResponse response, string ackValue)

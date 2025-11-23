@@ -6,9 +6,12 @@ namespace LaserTag.Defusal.Domain;
 public enum PropState
 {
     Idle,
+    On,
+    Ready,
+    Active,
+    Arming,
     Armed,
-    Planted,
-    Defusing,
     Defused,
-    Exploded
+    Detonated,
+    Error
 }
