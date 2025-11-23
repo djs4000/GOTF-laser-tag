@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Drawing;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using LaserTag.Defusal.Domain;
 using LaserTag.Defusal.Services;
@@ -37,6 +38,8 @@ public sealed class StatusForm : Form
     private readonly Label _actionLabel = new();
     private readonly Button _focusButton = new();
     private double _debugElapsedSec;
+    private double _debugTimerDurationSec;
+    private MatchSnapshotStatus? _debugTimerStatus;
     private string? _debugMatchId;
 
     [Browsable(false)]
@@ -233,13 +236,40 @@ public sealed class StatusForm : Form
 
     private async void OnDebugTimerTick(object? sender, EventArgs e)
     {
+        if (_debugTimerStatus is null)
+        {
+            StopDebugTimer();
+            return;
+        }
+
         _debugElapsedSec += _debugGameTimer.Interval / 1000.0;
-        await SendDebugSnapshotAsync(MatchSnapshotStatus.Running, _debugElapsedSec).ConfigureAwait(true);
+        var remainingMs = _debugTimerDurationSec > 0
+            ? Math.Max(0, (_debugTimerDurationSec - _debugElapsedSec) * 1000)
+            : (double?)null;
+
+        await SendDebugSnapshotAsync(_debugTimerStatus.Value, _debugElapsedSec, remainingMs).ConfigureAwait(true);
+
+        if (_debugTimerDurationSec > 0 && _debugElapsedSec >= _debugTimerDurationSec)
+        {
+            StopDebugTimer();
+        }
+    }
+
+    private async Task StartDebugTimerAsync(MatchSnapshotStatus status, double durationSec)
+    {
+        StopDebugTimer();
+        _debugTimerStatus = status;
+        _debugTimerDurationSec = durationSec;
+        _debugElapsedSec = 0;
+
+        await SendDebugSnapshotAsync(status, _debugElapsedSec, durationSec * 1000).ConfigureAwait(true);
+        _debugGameTimer.Start();
     }
 
     private void OnDebugIdleClick(object? sender, EventArgs e)
     {
         StopDebugTimer();
+        _debugElapsedSec = 0;
         _debugMatchId = null;
         _coordinator.SetIdle();
     }
@@ -253,22 +283,17 @@ public sealed class StatusForm : Form
 
     private async void OnDebugCountdownClick(object? sender, EventArgs e)
     {
-        StopDebugTimer();
-        _debugElapsedSec = 0;
-        await SendDebugSnapshotAsync(MatchSnapshotStatus.Countdown, _debugElapsedSec).ConfigureAwait(true);
+        await StartDebugTimerAsync(MatchSnapshotStatus.Countdown, 5).ConfigureAwait(true);
     }
 
     private async void OnDebugRunningClick(object? sender, EventArgs e)
     {
-        StopDebugTimer();
-        await SendDebugSnapshotAsync(MatchSnapshotStatus.Running, _debugElapsedSec).ConfigureAwait(true);
+        await StartDebugTimerAsync(MatchSnapshotStatus.Running, 210).ConfigureAwait(true);
     }
 
     private async void OnDebugStartTimerClick(object? sender, EventArgs e)
     {
-        _debugElapsedSec = 0;
-        await SendDebugSnapshotAsync(MatchSnapshotStatus.Running, _debugElapsedSec).ConfigureAwait(true);
-        _debugGameTimer.Start();
+        await StartDebugTimerAsync(MatchSnapshotStatus.Running, _matchOptions.LtDisplayedDurationSec).ConfigureAwait(true);
     }
 
     private void OnDebugStopTimerClick(object? sender, EventArgs e)
@@ -300,6 +325,9 @@ public sealed class StatusForm : Form
         {
             _debugGameTimer.Stop();
         }
+
+        _debugTimerStatus = null;
+        _debugTimerDurationSec = 0;
     }
 
     private void EnsureDebugMatchId()
@@ -307,10 +335,12 @@ public sealed class StatusForm : Form
         _debugMatchId ??= $"debug-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
     }
 
-    private Task SendDebugSnapshotAsync(MatchSnapshotStatus status, double elapsedSeconds, bool isLastSend = false)
+    private Task SendDebugSnapshotAsync(MatchSnapshotStatus status, double elapsedSeconds, double? remainingMsOverride = null, bool isLastSend = false)
     {
         EnsureDebugMatchId();
-        var remainingMs = (int)Math.Max(0, (_matchOptions.LtDisplayedDurationSec - elapsedSeconds) * 1000);
+        var remainingMs = remainingMsOverride.HasValue
+            ? (int)Math.Max(0, remainingMsOverride.Value)
+            : (int)Math.Max(0, (_matchOptions.LtDisplayedDurationSec - elapsedSeconds) * 1000);
         var dto = new MatchSnapshotDto
         {
             Id = _debugMatchId!,
