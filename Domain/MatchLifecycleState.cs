@@ -5,6 +5,7 @@ namespace LaserTag.Defusal.Domain;
 /// </summary>
 public enum MatchLifecycleState
 {
+    Idle,
     Freezetime,
     Live,
     Gameover

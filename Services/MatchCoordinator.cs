@@ -17,7 +17,7 @@ public sealed class MatchCoordinator
     private readonly UiAutomationOptions _uiAutomationOptions;
     private readonly object _sync = new();
 
-    private MatchLifecycleState _lifecycleState = MatchLifecycleState.Freezetime;
+    private MatchLifecycleState _lifecycleState = MatchLifecycleState.Idle;
     private PropState _propState = PropState.Idle;
     private double? _plantTimeSec;
     private bool _matchEnded;
@@ -68,9 +68,9 @@ public sealed class MatchCoordinator
                 return CurrentSnapshot;
             }
 
-            if (_lifecycleState == MatchLifecycleState.Freezetime)
+            if (_lifecycleState is MatchLifecycleState.Freezetime or MatchLifecycleState.Idle)
             {
-                _logger.LogInformation("Ignoring prop update during freezetime: {State}", dto.State);
+                _logger.LogInformation("Ignoring prop update while match inactive: {State}", dto.State);
                 return CurrentSnapshot;
             }
 
@@ -232,6 +232,32 @@ public sealed class MatchCoordinator
             _propState = PropState.Armed;
             _lifecycleState = MatchLifecycleState.Live;
             PublishSnapshotLocked("Manual start");
+        }
+    }
+
+    /// <summary>
+    /// Returns the coordinator to an idle state when no match data is available.
+    /// </summary>
+    public void SetIdle()
+    {
+        lock (_sync)
+        {
+            _currentMatchId = null;
+            _propState = PropState.Idle;
+            _plantTimeSec = null;
+            _matchEnded = false;
+            _lifecycleState = MatchLifecycleState.Idle;
+            _lastPropTimestamp = 0;
+            _lastSnapshotTimestamp = 0;
+            _lastElapsedSec = 0;
+            _lastClockUpdate = null;
+            _lastPropUpdate = null;
+            _lastClockLatency = null;
+            _lastActionDescription = "Idle (no match data)";
+            _focusAcquired = false;
+            _lastPropPayload = null;
+            _lastSnapshotPayload = null;
+            PublishSnapshotLocked("Idle state");
         }
     }
 

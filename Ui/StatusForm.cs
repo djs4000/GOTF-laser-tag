@@ -19,8 +19,10 @@ public sealed class StatusForm : Form
     private readonly MatchCoordinator _coordinator;
     private readonly ILogger<StatusForm> _logger;
     private readonly IFocusService _focusService;
+    private readonly MatchOptions _matchOptions;
     private readonly System.Windows.Forms.Timer _refreshTimer;
     private readonly System.Windows.Forms.Timer _focusTimer;
+    private readonly System.Windows.Forms.Timer _debugGameTimer;
     private MatchStateSnapshot _snapshot = MatchStateSnapshot.Default;
     private FocusWindowInfo _focusWindowInfo = FocusWindowInfo.Empty;
 
@@ -34,6 +36,8 @@ public sealed class StatusForm : Form
     private readonly Label _focusLabel = new();
     private readonly Label _actionLabel = new();
     private readonly Button _focusButton = new();
+    private double _debugElapsedSec;
+    private string? _debugMatchId;
 
     [Browsable(false)]
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -49,20 +53,21 @@ public sealed class StatusForm : Form
         _coordinator = coordinator;
         _logger = logger;
         _focusService = focusService;
+        _matchOptions = options.Value;
 
         FormBorderStyle = FormBorderStyle.FixedToolWindow;
         StartPosition = FormStartPosition.Manual;
         TopMost = true;
         ShowInTaskbar = false;
         Text = "ICE Defusal Monitor";
-        AutoSize = true;
-        AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        AutoSize = false;
+        AutoSizeMode = AutoSizeMode.GrowOnly;
 
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 8,
+            RowCount = 9,
             Padding = new Padding(10),
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink
@@ -80,10 +85,17 @@ public sealed class StatusForm : Form
         AddRow(layout, "Clock", _latencyLabel);
         AddRow(layout, "Focus", CreateFocusPanel());
         AddRow(layout, "Last", _actionLabel);
+        AddRow(layout, "Debug", CreateDebugPanel());
 
         Controls.Add(layout);
 
-        var refreshInterval = Math.Max(100, 1000 / Math.Max(1, options.Value.ClockExpectedHz));
+        layout.PerformLayout();
+        var preferredSize = layout.GetPreferredSize(Size.Empty);
+        ClientSize = preferredSize;
+        MinimumSize = preferredSize;
+        MaximumSize = preferredSize;
+
+        var refreshInterval = Math.Max(100, 1000 / Math.Max(1, _matchOptions.ClockExpectedHz));
         _refreshTimer = new System.Windows.Forms.Timer { Interval = refreshInterval };
         _refreshTimer.Tick += (_, _) => RenderSnapshot();
         _refreshTimer.Start();
@@ -91,6 +103,9 @@ public sealed class StatusForm : Form
         _focusTimer = new System.Windows.Forms.Timer { Interval = 1000 };
         _focusTimer.Tick += OnFocusTimerTick;
         _focusTimer.Start();
+
+        _debugGameTimer = new System.Windows.Forms.Timer { Interval = 500 };
+        _debugGameTimer.Tick += OnDebugTimerTick;
 
         _coordinator.SnapshotUpdated += OnSnapshotUpdated;
         RenderSnapshot();
@@ -143,6 +158,39 @@ public sealed class StatusForm : Form
         return panel;
     }
 
+    private Control CreateDebugPanel()
+    {
+        var panel = new FlowLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.LeftToRight
+        };
+
+        panel.Controls.Add(CreateDebugButton("Idle", OnDebugIdleClick));
+        panel.Controls.Add(CreateDebugButton("Freezetime", OnDebugFreezetimeClick));
+        panel.Controls.Add(CreateDebugButton("Live", OnDebugLiveClick));
+        panel.Controls.Add(CreateDebugButton("Start timer", OnDebugStartTimerClick));
+        panel.Controls.Add(CreateDebugButton("Stop timer", OnDebugStopTimerClick));
+        panel.Controls.Add(CreateDebugButton("Gameover", OnDebugGameoverClick));
+
+        return panel;
+    }
+
+    private Button CreateDebugButton(string text, EventHandler onClick)
+    {
+        var button = new Button
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Text = text,
+            Margin = new Padding(0, 0, 4, 0)
+        };
+
+        button.Click += onClick;
+        return button;
+    }
+
     private void AddRow(TableLayoutPanel layout, string label, Control control)
     {
         var header = new Label
@@ -166,6 +214,80 @@ public sealed class StatusForm : Form
         {
             BeginInvoke(RenderSnapshot);
         }
+    }
+
+    private async void OnDebugTimerTick(object? sender, EventArgs e)
+    {
+        _debugElapsedSec += _debugGameTimer.Interval / 1000.0;
+        await SendDebugSnapshotAsync(MatchSnapshotStatus.Running, _debugElapsedSec).ConfigureAwait(true);
+    }
+
+    private void OnDebugIdleClick(object? sender, EventArgs e)
+    {
+        StopDebugTimer();
+        _debugMatchId = null;
+        _coordinator.SetIdle();
+    }
+
+    private async void OnDebugFreezetimeClick(object? sender, EventArgs e)
+    {
+        StopDebugTimer();
+        _debugElapsedSec = 0;
+        await SendDebugSnapshotAsync(MatchSnapshotStatus.WaitingOnStart, _debugElapsedSec).ConfigureAwait(true);
+    }
+
+    private async void OnDebugLiveClick(object? sender, EventArgs e)
+    {
+        StopDebugTimer();
+        await SendDebugSnapshotAsync(MatchSnapshotStatus.Running, _debugElapsedSec).ConfigureAwait(true);
+    }
+
+    private async void OnDebugStartTimerClick(object? sender, EventArgs e)
+    {
+        _debugElapsedSec = 0;
+        await SendDebugSnapshotAsync(MatchSnapshotStatus.Running, _debugElapsedSec).ConfigureAwait(true);
+        _debugGameTimer.Start();
+    }
+
+    private void OnDebugStopTimerClick(object? sender, EventArgs e)
+    {
+        StopDebugTimer();
+    }
+
+    private async void OnDebugGameoverClick(object? sender, EventArgs e)
+    {
+        StopDebugTimer();
+        await SendDebugSnapshotAsync(MatchSnapshotStatus.Completed, _debugElapsedSec, isLastSend: true).ConfigureAwait(true);
+    }
+
+    private void StopDebugTimer()
+    {
+        if (_debugGameTimer.Enabled)
+        {
+            _debugGameTimer.Stop();
+        }
+    }
+
+    private void EnsureDebugMatchId()
+    {
+        _debugMatchId ??= $"debug-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
+    }
+
+    private Task SendDebugSnapshotAsync(MatchSnapshotStatus status, double elapsedSeconds, bool isLastSend = false)
+    {
+        EnsureDebugMatchId();
+        var remainingMs = (int)Math.Max(0, (_matchOptions.LtDisplayedDurationSec - elapsedSeconds) * 1000);
+        var dto = new MatchSnapshotDto
+        {
+            Id = _debugMatchId!,
+            Timestamp = DateTimeOffset.UtcNow.UtcTicks,
+            IsLastSend = isLastSend,
+            Status = status,
+            RemainingTimeMs = remainingMs,
+            WinnerTeam = null
+        };
+
+        return _coordinator.UpdateMatchSnapshotAsync(dto, CancellationToken.None);
     }
 
     private void RenderSnapshot()
@@ -229,6 +351,7 @@ public sealed class StatusForm : Form
             _coordinator.SnapshotUpdated -= OnSnapshotUpdated;
             _refreshTimer.Dispose();
             _focusTimer.Dispose();
+            _debugGameTimer.Dispose();
         }
 
         base.Dispose(disposing);
