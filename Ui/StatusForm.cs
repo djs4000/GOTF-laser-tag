@@ -37,6 +37,8 @@ public sealed class StatusForm : Form
     private readonly Label _focusLabel = new();
     private readonly Label _actionLabel = new();
     private readonly Button _focusButton = new();
+    private const double CountdownDebugDurationSec = 5;
+    private const double RunningDebugDurationSec = 210;
     private double _debugElapsedSec;
     private double _debugTimerDurationSec;
     private MatchSnapshotStatus? _debugTimerStatus;
@@ -251,7 +253,14 @@ public sealed class StatusForm : Form
 
         if (_debugTimerDurationSec > 0 && _debugElapsedSec >= _debugTimerDurationSec)
         {
-            StopDebugTimer();
+            if (_debugTimerStatus == MatchSnapshotStatus.Countdown)
+            {
+                await StartDebugTimerAsync(MatchSnapshotStatus.Running, RunningDebugDurationSec).ConfigureAwait(true);
+            }
+            else
+            {
+                StopDebugTimer();
+            }
         }
     }
 
@@ -283,12 +292,12 @@ public sealed class StatusForm : Form
 
     private async void OnDebugCountdownClick(object? sender, EventArgs e)
     {
-        await StartDebugTimerAsync(MatchSnapshotStatus.Countdown, 5).ConfigureAwait(true);
+        await StartDebugTimerAsync(MatchSnapshotStatus.Countdown, CountdownDebugDurationSec).ConfigureAwait(true);
     }
 
     private async void OnDebugRunningClick(object? sender, EventArgs e)
     {
-        await StartDebugTimerAsync(MatchSnapshotStatus.Running, 210).ConfigureAwait(true);
+        await StartDebugTimerAsync(MatchSnapshotStatus.Running, RunningDebugDurationSec).ConfigureAwait(true);
     }
 
     private async void OnDebugStartTimerClick(object? sender, EventArgs e)
