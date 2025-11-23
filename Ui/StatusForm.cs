@@ -34,11 +34,13 @@ public sealed class StatusForm : Form
     private readonly Label _propLabel = new();
     private readonly Label _plantLabel = new();
     private readonly Label _latencyLabel = new();
+    private readonly Label _countdownLabel = new();
+    private readonly Label _matchTimerLabel = new();
     private readonly Label _focusLabel = new();
     private readonly Label _actionLabel = new();
     private readonly Button _focusButton = new();
     private const double CountdownDebugDurationSec = 5;
-    private const double RunningDebugDurationSec = 210;
+    private const double RunningDebugDurationSec = 219;
     private double _debugElapsedSec;
     private double _debugTimerDurationSec;
     private MatchSnapshotStatus? _debugTimerStatus;
@@ -73,7 +75,7 @@ public sealed class StatusForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 9,
+            RowCount = 11,
             Padding = new Padding(10),
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink
@@ -87,8 +89,10 @@ public sealed class StatusForm : Form
         AddRow(layout, "Match", _matchLabel);
         AddRow(layout, "State", CreateStatePanel());
         AddRow(layout, "Prop", _propLabel);
-        AddRow(layout, "Plant", _plantLabel);
+        AddRow(layout, "Bomb", _plantLabel);
         AddRow(layout, "Clock", _latencyLabel);
+        AddRow(layout, "Countdown", _countdownLabel);
+        AddRow(layout, "Match timer", _matchTimerLabel);
         AddRow(layout, "Focus", CreateFocusPanel());
         AddRow(layout, "Last", _actionLabel);
         AddRow(layout, "Debug", CreateDebugPanel());
@@ -363,6 +367,19 @@ public sealed class StatusForm : Form
         return _coordinator.UpdateMatchSnapshotAsync(dto, CancellationToken.None);
     }
 
+    private static string FormatTimeMs(int? remainingMs)
+    {
+        if (remainingMs is null)
+        {
+            return "—";
+        }
+
+        var totalSeconds = Math.Max(0, remainingMs.Value / 1000);
+        var minutes = totalSeconds / 60;
+        var seconds = totalSeconds % 60;
+        return $"{minutes:0}:{seconds:00}";
+    }
+
     private void RenderSnapshot()
     {
         if (!IsHandleCreated)
@@ -382,6 +399,14 @@ public sealed class StatusForm : Form
         _latencyLabel.Text = snapshot.LastClockLatency.HasValue
             ? $"Latency {snapshot.LastClockLatency.Value.TotalMilliseconds:F0} ms"
             : "Latency —";
+
+        _countdownLabel.Text = snapshot.LifecycleState == MatchLifecycleState.Countdown
+            ? FormatTimeMs(snapshot.RemainingTimeMs)
+            : "—";
+
+        _matchTimerLabel.Text = snapshot.LifecycleState != MatchLifecycleState.Idle
+            ? FormatTimeMs(snapshot.RemainingTimeMs)
+            : "—";
 
         UpdateFocusLabel();
 

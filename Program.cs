@@ -89,7 +89,7 @@ internal static class Program
             StampAckHeaders(httpContext.Response, "prop-status");
             var response = new PropStatusResponseDto
             {
-                Status = MapLifecycleForProp(snapshot.LifecycleState),
+                Status = dto.State.ToString(),
                 RemainingTimeMs = Math.Max(0, coordinator.LastKnownRemainingTimeMs ?? 0),
                 Timestamp = dto.Timestamp
             };
@@ -193,20 +193,6 @@ internal static class Program
         }
 
         return validUrls.ToArray();
-    }
-
-    private static string MapLifecycleForProp(MatchLifecycleState state)
-    {
-        return state switch
-        {
-            MatchLifecycleState.WaitingOnStart => "WaitingOnStart",
-            MatchLifecycleState.Countdown => "Countdown",
-            MatchLifecycleState.Running => "Running",
-            MatchLifecycleState.WaitingOnFinalData => "WaitingOnFinalData",
-            MatchLifecycleState.Completed => "Completed",
-            MatchLifecycleState.Cancelled => "Cancelled",
-            _ => "Idle"
-        };
     }
 
     private static void StampAckHeaders(HttpResponse response, string ackValue)
