@@ -86,6 +86,18 @@ public class MatchCoordinatorTests
     }
 
     [Fact]
+    public async Task PropStateIsCapturedForDisplayWhileInactive()
+    {
+        var (coordinator, focus) = CreateCoordinator();
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.WaitingOnStart, 400_000, 1), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 2 }, CancellationToken.None);
+
+        var snapshot = coordinator.Snapshot();
+        Assert.Equal(PropState.Armed, snapshot.PropState);
+        Assert.Equal(0, focus.TriggerCount);
+    }
+
+    [Fact]
     public async Task GameoverLocksOutFurtherActions()
     {
         var (coordinator, focus) = CreateCoordinator();

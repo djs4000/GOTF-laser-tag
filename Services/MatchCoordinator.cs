@@ -71,12 +71,6 @@ public sealed class MatchCoordinator
                 return CurrentSnapshot;
             }
 
-            if (_lifecycleState is MatchLifecycleState.Idle or MatchLifecycleState.WaitingOnStart or MatchLifecycleState.Countdown)
-            {
-                _logger.LogInformation("Ignoring prop update while match inactive: {State}", dto.State);
-                return CurrentSnapshot;
-            }
-
             if (dto.Timestamp < _lastPropTimestamp)
             {
                 _logger.LogWarning("Out-of-order prop payload ignored (timestamp {Timestamp})", dto.Timestamp);
@@ -87,6 +81,13 @@ public sealed class MatchCoordinator
             _lastPropTimestamp = dto.Timestamp;
             _lastPropUpdate = DateTimeOffset.UtcNow;
             _lastPropPayload = dto;
+            _propState = incomingState;
+
+            if (_lifecycleState is MatchLifecycleState.Idle or MatchLifecycleState.WaitingOnStart or MatchLifecycleState.Countdown)
+            {
+                PublishSnapshotLocked("Prop update (inactive match)");
+                return CurrentSnapshot;
+            }
 
             if (IsPlantState(incomingState))
             {
@@ -105,7 +106,6 @@ public sealed class MatchCoordinator
                 _lifecycleState = MatchLifecycleState.WaitingOnFinalData;
             }
 
-            _propState = incomingState;
             PublishSnapshotLocked("Prop update");
         }
 
