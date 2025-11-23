@@ -12,19 +12,19 @@ The system uses a pragmatic ("hacky") trigger to integrate with a closed applica
 
 - **Platform**: C# on .NET 9; Windows desktop tray app with an always-on-top status window.
 - **Distribution**: Single-file, self-contained EXE (win-x64).
-- **Inbound HTTP (PUT)**:
-  1. `/prop/status` → bomb/prop state updates (`armed`, `planted`, `defusing`, `defused`, `exploded`).
-  2. `/match/clock` → live match state and remaining time updates (from LT host @ ~10 Hz).
+- **Inbound HTTP (POST)**:
+  1. `/prop` → bomb/prop state updates (`armed`, `planted`, `defusing`, `defused`, `exploded`).
+  2. `/match` → match snapshots (status, clock, and optional player payloads from LT host).
 - **LT States**:
-  - **Freezetime** → pre-match countdown.
-  - **Live** → active game; starts at 3 min 39 s (219 s) and counts down.
-  - **Gameover** → match ended; remaining time stays at 0.
+  - **WaitingOnStart / Countdown** → pre-match countdown.
+  - **Running** → active game; starts at 3 min 39 s (219 s) and counts down.
+  - **WaitingOnFinalData / Completed / Cancelled** → match ended; remaining time stays at 0.
 - **Game Logic**:
   - If **no plant by 180 s elapsed** → end match.
-  - If **planted at ≥ 180 s elapsed**, allow **40 s overtime** (defuse window).
+  - If **planted at ≥ 180 s elapsed**, allow **40 s overtime** (defuse window). Overtime ends after the defuse window expires or on defuse/explosion.
   - **Exploded** or **Defused** → immediate end.
-  - **During Freezetime**, ignore prop events.
-  - **Relay**: optionally forward prop/game state to downstream system (no auth required).
+  - **During countdown states**, ignore prop events.
+  - **Relay**: optionally forward combined payloads to downstream system (bearer token optional).
 - **Security**: Bind to loopback/LAN only; configurable CIDR allowlist and optional bearer token.
 - **Focus Trigger**: Targets window titled `ICE` (process `ICombat.Desktop`), restores if minimized, brings to front, then sends `Ctrl+F` via `SendInput`.
 
@@ -33,8 +33,8 @@ The system uses a pragmatic ("hacky") trigger to integrate with a closed applica
 ## Topology
 
 ```
-[Prop] → PUT /prop/status
-[LT Host] → PUT /match/clock
+[Prop] → POST /prop
+[LT Host] → POST /match
       ↓
    [Application] --Focus+Ctrl+F--> [Laser Tag Software (ICE)]
       └──(optional relay)──> [Downstream System]
@@ -50,7 +50,7 @@ The system uses a pragmatic ("hacky") trigger to integrate with a closed applica
 - Header: `Authorization: Bearer <TOKEN>` (optional if disabled)
 - 401 on invalid token or denied IP.
 
-### `/prop/status`
+### `/prop`
 **Body (JSON)**
 ```json
 {
@@ -64,28 +64,34 @@ The system uses a pragmatic ("hacky") trigger to integrate with a closed applica
 - `planted` → record `plantTime` and unlock overtime logic.
 - `defused` → EndMatch immediately.
 
-### `/match/clock`
+### `/match`
 **Body (JSON)**
 ```json
 {
   "id": "match_identifier",
   "timestamp": 1761553673,
-  "status": "live", // "freezetime", "live", "gameover"
+  "status": "Running", // "WaitingOnStart", "Countdown", "Running", "WaitingOnFinalData", "Completed", "Cancelled"
   "remaining_time_ms": 180000,
-  "winner_team": null
+  "winner_team": null,
+  "is_last_send": false,
+  "players": [ { "id": "player_id", "team": "A", "kills": 0 /* ... */ } ]
 }
 ```
 **Behavior**
 - Derives elapsed time: `elapsed = LtDisplayedDurationSec - remaining_time_sec`.
-- Ignores updates during `freezetime`.
-- If **status == live**:
+- Ignores updates during `WaitingOnStart`/`Countdown`.
+- If **status == Running**:
   - `elapsed ≥ 180` and bomb not planted → EndMatch.
   - `bomb planted ≥ 180` and `elapsed ≥ plantTime + 40` → EndMatch.
   - `prop defused` or `exploded` → EndMatch immediately.
-- If **status == gameover**, ignore further updates.
+- If **status is terminal (WaitingOnFinalData/Completed/Cancelled)**, ignore further updates.
+- Player data is accepted but ignored for defusal logic.
 
 ### Relay (outbound)
-If enabled, the application forwards POSTs `{ match, prop, clock, fsm }` to the configured `RelayUrl`.
+If enabled, the application forwards POSTs `{ match, prop, clock, fsm }` to the configured `RelayUrl`. Supports optional bearer token.
+
+### Health
+- `GET /healthz` returns 200 when the service is running.
 
 ---
 
@@ -111,8 +117,8 @@ stateDiagram-v2
 
 **Notes**
 - `Exploded` and `Defused` end immediately.
-- Overtime applies only if bomb planted at or after 180 s.
-- `Freezetime` resets FSM.
+- Overtime applies only if bomb planted at or after 180 s and ends once the defuse window elapses or on defuse/explosion.
+- `WaitingOnStart`/`Countdown` reset FSM.
 
 ---
 
@@ -158,8 +164,9 @@ stateDiagram-v2
     "ProcessName": "ICombat.Desktop",
     "WindowTitleRegex": "^ICE$",
     "SendShortcut": "Ctrl+F",
-    "FocusTimeoutMs": 1200,
-    "PostShortcutDelayMs": 150
+    "FocusTimeoutMs": 1500,
+    "PostShortcutDelayMs": 150,
+    "DebounceWindowMs": 2000 // tunable defaults; confirm with backend
   },
   "Diagnostics": {
     "LogLevel": "Information",
@@ -183,13 +190,14 @@ stateDiagram-v2
 
 ## Decisions (Confirmed)
 
-- **Defused → End immediately**  
-- **Clock Source → LT software, sends remaining time (configurable 10 Hz)**  
-- **LT States → freezetime, live, gameover**  
-- **Window Target → “ICE” / ICombat.Desktop**  
-- **Relay → Configurable URL, no auth**  
-- **Allowlist → Configurable CIDRs**  
+- **Defused → End immediately**
+- **Clock Source → LT software, sends remaining time (configurable 10 Hz)**
+- **LT States → WaitingOnStart, Countdown, Running, WaitingOnFinalData, Completed, Cancelled**
+- **Window Target → “ICE” / ICombat.Desktop**
+- **Relay → Configurable URL, optional bearer token**
+- **Allowlist → Configurable CIDRs**
 - **UI → Show OVERTIME badge + countdown**
+- **Automation defaults are tunable (focus timeout, post-shortcut delay, debounce window)**
 
 ---
 ## Folder Layout
@@ -211,6 +219,6 @@ stateDiagram-v2
 
 ## Versioning & Support
 
-- Target .NET 9 (Windows 10/11).  
-- Single‑EXE deployment, minimal dependencies.  
+- Target .NET 9 (Windows 10/11).
+- Single‑EXE deployment, minimal dependencies.
 - Semantic versioning for application + HTTP schema.
