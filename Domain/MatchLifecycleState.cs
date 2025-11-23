@@ -6,7 +6,10 @@ namespace LaserTag.Defusal.Domain;
 public enum MatchLifecycleState
 {
     Idle,
-    Freezetime,
-    Live,
-    Gameover
+    WaitingOnStart,
+    Countdown,
+    Running,
+    WaitingOnFinalData,
+    Completed,
+    Cancelled
 }

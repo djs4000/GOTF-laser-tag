@@ -63,12 +63,12 @@ public sealed class MatchCoordinator
 
         lock (_sync)
         {
-            if (_matchEnded && _lifecycleState == MatchLifecycleState.Gameover)
+            if (_matchEnded && IsTerminalState(_lifecycleState))
             {
                 return CurrentSnapshot;
             }
 
-            if (_lifecycleState is MatchLifecycleState.Freezetime or MatchLifecycleState.Idle)
+            if (_lifecycleState is MatchLifecycleState.Idle or MatchLifecycleState.WaitingOnStart or MatchLifecycleState.Countdown)
             {
                 _logger.LogInformation("Ignoring prop update while match inactive: {State}", dto.State);
                 return CurrentSnapshot;
@@ -99,7 +99,7 @@ public sealed class MatchCoordinator
                 shouldTriggerEnd = true;
                 triggerReason = incomingState == PropState.Defused ? "Prop defused" : "Prop exploded";
                 _matchEnded = true;
-                _lifecycleState = MatchLifecycleState.Gameover;
+                _lifecycleState = MatchLifecycleState.WaitingOnFinalData;
             }
 
             _propState = incomingState;
@@ -142,7 +142,7 @@ public sealed class MatchCoordinator
                 ResetForNewMatch(dto.Id);
             }
 
-            if (_matchEnded && _lifecycleState == MatchLifecycleState.Gameover)
+            if (_matchEnded && IsTerminalState(_lifecycleState) && !IsTerminalStatus(dto.Status))
             {
                 return CurrentSnapshot;
             }
@@ -166,23 +166,36 @@ public sealed class MatchCoordinator
             switch (dto.Status)
             {
                 case MatchSnapshotStatus.WaitingOnStart:
+                    _matchEnded = false;
+                    _lifecycleState = MatchLifecycleState.WaitingOnStart;
+                    _plantTimeSec = null;
+                    _propState = PropState.Idle;
+                    break;
                 case MatchSnapshotStatus.Countdown:
-                    _lifecycleState = MatchLifecycleState.Freezetime;
+                    _matchEnded = false;
+                    _lifecycleState = MatchLifecycleState.Countdown;
                     _plantTimeSec = null;
                     _propState = PropState.Idle;
                     break;
                 case MatchSnapshotStatus.Running:
+                    _matchEnded = false;
                     if (_propState == PropState.Idle)
                     {
                         _propState = PropState.Armed;
                     }
-                    _lifecycleState = MatchLifecycleState.Live;
+                    _lifecycleState = MatchLifecycleState.Running;
                     EvaluateLiveState(ref shouldTriggerEnd, ref triggerReason);
                     break;
                 case MatchSnapshotStatus.WaitingOnFinalData:
+                    _lifecycleState = MatchLifecycleState.WaitingOnFinalData;
+                    _matchEnded = true;
+                    break;
                 case MatchSnapshotStatus.Completed:
+                    _lifecycleState = MatchLifecycleState.Completed;
+                    _matchEnded = true;
+                    break;
                 case MatchSnapshotStatus.Cancelled:
-                    _lifecycleState = MatchLifecycleState.Gameover;
+                    _lifecycleState = MatchLifecycleState.Cancelled;
                     _matchEnded = true;
                     break;
             }
@@ -230,7 +243,7 @@ public sealed class MatchCoordinator
         {
             ResetForNewMatch(matchId ?? $"manual-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}");
             _propState = PropState.Armed;
-            _lifecycleState = MatchLifecycleState.Live;
+            _lifecycleState = MatchLifecycleState.Running;
             PublishSnapshotLocked("Manual start");
         }
     }
@@ -281,7 +294,7 @@ public sealed class MatchCoordinator
             shouldTriggerEnd = true;
             triggerReason = _propState == PropState.Defused ? "Prop defused" : "Prop exploded";
             _matchEnded = true;
-            _lifecycleState = MatchLifecycleState.Gameover;
+            _lifecycleState = MatchLifecycleState.WaitingOnFinalData;
             return;
         }
 
@@ -290,7 +303,7 @@ public sealed class MatchCoordinator
             shouldTriggerEnd = true;
             triggerReason = $"No plant by {_matchOptions.AutoEndNoPlantAtSec}s";
             _matchEnded = true;
-            _lifecycleState = MatchLifecycleState.Gameover;
+            _lifecycleState = MatchLifecycleState.WaitingOnFinalData;
             return;
         }
 
@@ -302,7 +315,7 @@ public sealed class MatchCoordinator
                 shouldTriggerEnd = true;
                 triggerReason = "Bomb overtime expired";
                 _matchEnded = true;
-                _lifecycleState = MatchLifecycleState.Gameover;
+                _lifecycleState = MatchLifecycleState.WaitingOnFinalData;
             }
         }
     }
@@ -389,5 +402,15 @@ public sealed class MatchCoordinator
         _logger.LogInformation("Issuing EndMatch due to {Reason}", reason);
         var result = await _focusService.TryEndMatchAsync(reason, cancellationToken).ConfigureAwait(false);
         ReportFocusResult(result.FocusAcquired, result.Description);
+    }
+
+    private static bool IsTerminalState(MatchLifecycleState state)
+    {
+        return state is MatchLifecycleState.WaitingOnFinalData or MatchLifecycleState.Completed or MatchLifecycleState.Cancelled;
+    }
+
+    private static bool IsTerminalStatus(MatchSnapshotStatus status)
+    {
+        return status is MatchSnapshotStatus.WaitingOnFinalData or MatchSnapshotStatus.Completed or MatchSnapshotStatus.Cancelled;
     }
 }

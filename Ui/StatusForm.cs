@@ -92,7 +92,8 @@ public sealed class StatusForm : Form
 
         layout.PerformLayout();
         var preferredSize = layout.GetPreferredSize(Size.Empty);
-        var targetSize = new Size(preferredSize.Width, preferredSize.Height + 20);
+        var targetHeight = (int)Math.Ceiling(preferredSize.Height * 1.2);
+        var targetSize = new Size(preferredSize.Width, targetHeight);
         ClientSize = targetSize;
         MinimumSize = targetSize;
         MaximumSize = targetSize;
@@ -179,11 +180,14 @@ public sealed class StatusForm : Form
         };
 
         panel.Controls.Add(CreateDebugButton("Idle", OnDebugIdleClick));
-        panel.Controls.Add(CreateDebugButton("Freezetime", OnDebugFreezetimeClick));
-        panel.Controls.Add(CreateDebugButton("Live", OnDebugLiveClick));
+        panel.Controls.Add(CreateDebugButton("WaitingOnStart", OnDebugWaitingOnStartClick));
+        panel.Controls.Add(CreateDebugButton("Countdown", OnDebugCountdownClick));
+        panel.Controls.Add(CreateDebugButton("Running", OnDebugRunningClick));
         panel.Controls.Add(CreateDebugButton("Start timer", OnDebugStartTimerClick));
         panel.Controls.Add(CreateDebugButton("Stop timer", OnDebugStopTimerClick));
-        panel.Controls.Add(CreateDebugButton("Gameover", OnDebugGameoverClick));
+        panel.Controls.Add(CreateDebugButton("WaitingOnFinalData", OnDebugWaitingOnFinalDataClick));
+        panel.Controls.Add(CreateDebugButton("Completed", OnDebugCompletedClick));
+        panel.Controls.Add(CreateDebugButton("Cancelled", OnDebugCancelledClick));
 
         return panel;
     }
@@ -240,14 +244,21 @@ public sealed class StatusForm : Form
         _coordinator.SetIdle();
     }
 
-    private async void OnDebugFreezetimeClick(object? sender, EventArgs e)
+    private async void OnDebugWaitingOnStartClick(object? sender, EventArgs e)
     {
         StopDebugTimer();
         _debugElapsedSec = 0;
         await SendDebugSnapshotAsync(MatchSnapshotStatus.WaitingOnStart, _debugElapsedSec).ConfigureAwait(true);
     }
 
-    private async void OnDebugLiveClick(object? sender, EventArgs e)
+    private async void OnDebugCountdownClick(object? sender, EventArgs e)
+    {
+        StopDebugTimer();
+        _debugElapsedSec = 0;
+        await SendDebugSnapshotAsync(MatchSnapshotStatus.Countdown, _debugElapsedSec).ConfigureAwait(true);
+    }
+
+    private async void OnDebugRunningClick(object? sender, EventArgs e)
     {
         StopDebugTimer();
         await SendDebugSnapshotAsync(MatchSnapshotStatus.Running, _debugElapsedSec).ConfigureAwait(true);
@@ -265,10 +276,22 @@ public sealed class StatusForm : Form
         StopDebugTimer();
     }
 
-    private async void OnDebugGameoverClick(object? sender, EventArgs e)
+    private async void OnDebugWaitingOnFinalDataClick(object? sender, EventArgs e)
+    {
+        StopDebugTimer();
+        await SendDebugSnapshotAsync(MatchSnapshotStatus.WaitingOnFinalData, _debugElapsedSec).ConfigureAwait(true);
+    }
+
+    private async void OnDebugCompletedClick(object? sender, EventArgs e)
     {
         StopDebugTimer();
         await SendDebugSnapshotAsync(MatchSnapshotStatus.Completed, _debugElapsedSec, isLastSend: true).ConfigureAwait(true);
+    }
+
+    private async void OnDebugCancelledClick(object? sender, EventArgs e)
+    {
+        StopDebugTimer();
+        await SendDebugSnapshotAsync(MatchSnapshotStatus.Cancelled, _debugElapsedSec, isLastSend: true).ConfigureAwait(true);
     }
 
     private void StopDebugTimer()
