@@ -1,4 +1,6 @@
 using System;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using LaserTag.Defusal.Domain;
@@ -108,19 +110,67 @@ public class MatchCoordinatorTests
         Assert.InRange(snapshot.PlantTimeSec ?? double.NaN, 122.5, 123.5);
     }
 
+    [Fact]
+    public async Task PropResponseDefaultsDuringIdleState()
+    {
+        var (coordinator, _) = CreateCoordinator();
+        var response = await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Idle, Timestamp = 7 }, CancellationToken.None);
+        Assert.Equal(MatchSnapshotStatus.WaitingOnStart, response.Status);
+        Assert.Equal(400_000, response.RemainingTimeMs);
+        Assert.Equal(7, response.Timestamp);
+
+        var serialized = SerializeResponse(response);
+        Assert.Equal("waitingOnStart", serialized.GetProperty("status").GetString());
+        Assert.Equal(400_000, serialized.GetProperty("remaining_time_ms").GetInt32());
+        Assert.Equal(7, serialized.GetProperty("timestamp").GetInt64());
+    }
+
+    [Fact]
+    public async Task PropResponseReflectsLatestMatchSnapshot()
+    {
+        var (coordinator, _) = CreateCoordinator();
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Running, 123_000, 12), CancellationToken.None);
+        var response = await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Planted, Timestamp = 9 }, CancellationToken.None);
+
+        Assert.Equal(MatchSnapshotStatus.Running, response.Status);
+        Assert.Equal(123_000, response.RemainingTimeMs);
+        Assert.Equal(NewSnapshotTimestamp(12), response.Timestamp);
+
+        var serialized = SerializeResponse(response);
+        Assert.Equal("running", serialized.GetProperty("status").GetString());
+        Assert.Equal(123_000, serialized.GetProperty("remaining_time_ms").GetInt32());
+        Assert.Equal(NewSnapshotTimestamp(12), serialized.GetProperty("timestamp").GetInt64());
+    }
+
     private static MatchSnapshotDto NewSnapshot(string id, MatchSnapshotStatus status, int remainingMs, long secondsFromEpoch)
     {
-        var timestamp = DateTimeOffset.UnixEpoch.AddSeconds(secondsFromEpoch).UtcDateTime.Ticks;
         return new MatchSnapshotDto
         {
             Id = id,
             Status = status,
             RemainingTimeMs = remainingMs,
-            Timestamp = timestamp,
+            Timestamp = NewSnapshotTimestamp(secondsFromEpoch),
             WinnerTeam = null,
             IsLastSend = false,
             Players = Array.Empty<MatchPlayerSnapshotDto>()
         };
+    }
+
+    private static long NewSnapshotTimestamp(long secondsFromEpoch)
+    {
+        return DateTimeOffset.UnixEpoch.AddSeconds(secondsFromEpoch).UtcDateTime.Ticks;
+    }
+
+    private static JsonElement SerializeResponse(PropUpdateResponseDto response)
+    {
+        var options = new JsonSerializerOptions
+        {
+            Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false) }
+        };
+
+        var json = JsonSerializer.Serialize(response, options);
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.Clone();
     }
 
     private sealed class FakeFocusService : IFocusService
