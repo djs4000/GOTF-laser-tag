@@ -55,29 +55,30 @@ public sealed class MatchCoordinator
     /// <summary>
     /// Applies a new prop status update.
     /// </summary>
-    public async Task<MatchStateSnapshot> UpdatePropAsync(PropStatusDto dto, CancellationToken cancellationToken)
+    public async Task<PropUpdateResponseDto> UpdatePropAsync(PropStatusDto dto, CancellationToken cancellationToken)
     {
         bool shouldTriggerEnd = false;
         string? triggerReason = null;
         PropState incomingState;
+        PropUpdateResponseDto response;
 
         lock (_sync)
         {
             if (_matchEnded && _lifecycleState == MatchLifecycleState.Gameover)
             {
-                return CurrentSnapshot;
+                return BuildPropUpdateResponse(dto.Timestamp);
             }
 
             if (_lifecycleState == MatchLifecycleState.Freezetime)
             {
                 _logger.LogInformation("Ignoring prop update during freezetime: {State}", dto.State);
-                return CurrentSnapshot;
+                return BuildPropUpdateResponse(dto.Timestamp);
             }
 
             if (dto.Timestamp < _lastPropTimestamp)
             {
                 _logger.LogWarning("Out-of-order prop payload ignored (timestamp {Timestamp})", dto.Timestamp);
-                return CurrentSnapshot;
+                return BuildPropUpdateResponse(dto.Timestamp);
             }
 
             incomingState = dto.State;
@@ -104,6 +105,7 @@ public sealed class MatchCoordinator
 
             _propState = incomingState;
             PublishSnapshotLocked("Prop update");
+            response = BuildPropUpdateResponse(dto.Timestamp);
         }
 
         if (shouldTriggerEnd)
@@ -111,7 +113,7 @@ public sealed class MatchCoordinator
             await TriggerEndMatchAsync(triggerReason!, cancellationToken).ConfigureAwait(false);
         }
 
-        return CurrentSnapshot;
+        return response;
     }
 
     /// <summary>
@@ -319,6 +321,20 @@ public sealed class MatchCoordinator
         }
 
         _logger.LogDebug("State updated via {Source}: {@Snapshot}", source, snapshot);
+    }
+
+    private PropUpdateResponseDto BuildPropUpdateResponse(long propTimestamp)
+    {
+        var status = _lastSnapshotPayload?.Status ?? MatchSnapshotStatus.WaitingOnStart;
+        var remainingTime = _lastSnapshotPayload?.RemainingTimeMs ?? (_matchOptions.LtDisplayedDurationSec * 1000);
+        var timestamp = _lastSnapshotPayload?.Timestamp ?? propTimestamp;
+
+        return new PropUpdateResponseDto
+        {
+            Status = status,
+            RemainingTimeMs = remainingTime,
+            Timestamp = timestamp
+        };
     }
 
     private void ResetForNewMatch(string matchId)
