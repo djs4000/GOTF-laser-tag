@@ -61,6 +61,7 @@ public sealed class StatusForm : Form
         ShowInTaskbar = false;
         Text = "ICE Defusal Monitor";
         AutoSize = false;
+        AutoScroll = true;
         AutoSizeMode = AutoSizeMode.GrowOnly;
 
         var layout = new TableLayoutPanel
@@ -91,9 +92,10 @@ public sealed class StatusForm : Form
 
         layout.PerformLayout();
         var preferredSize = layout.GetPreferredSize(Size.Empty);
-        ClientSize = preferredSize;
-        MinimumSize = preferredSize;
-        MaximumSize = preferredSize;
+        var targetSize = new Size(preferredSize.Width, preferredSize.Height + 20);
+        ClientSize = targetSize;
+        MinimumSize = targetSize;
+        MaximumSize = targetSize;
 
         var refreshInterval = Math.Max(100, 1000 / Math.Max(1, _matchOptions.ClockExpectedHz));
         _refreshTimer = new System.Windows.Forms.Timer { Interval = refreshInterval };
@@ -138,23 +140,32 @@ public sealed class StatusForm : Form
 
     private Control CreateFocusPanel()
     {
-        var panel = new FlowLayoutPanel
+        var panel = new TableLayoutPanel
         {
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            FlowDirection = FlowDirection.LeftToRight
+            ColumnCount = 2,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0),
+            Padding = new Padding(0)
         };
 
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
         _focusLabel.AutoSize = true;
+        _focusLabel.AutoEllipsis = true;
+        _focusLabel.MaximumSize = new Size(280, 0);
 
         _focusButton.AutoSize = true;
         _focusButton.AutoSizeMode = AutoSizeMode.GrowAndShrink;
         _focusButton.Margin = new Padding(8, 0, 0, 0);
         _focusButton.Text = "Focus window";
+        _focusButton.Anchor = AnchorStyles.Right;
         _focusButton.Click += OnFocusButtonClick;
 
-        panel.Controls.Add(_focusLabel);
-        panel.Controls.Add(_focusButton);
+        panel.Controls.Add(_focusLabel, 0, 0);
+        panel.Controls.Add(_focusButton, 1, 0);
         return panel;
     }
 
