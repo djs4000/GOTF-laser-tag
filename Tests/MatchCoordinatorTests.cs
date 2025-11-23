@@ -120,6 +120,22 @@ public class MatchCoordinatorTests
         Assert.InRange(snapshot.PlantTimeSec ?? double.NaN, 122.5, 123.5);
     }
 
+    [Fact]
+    public async Task BuildPropResponseReflectsLatestMatchStatus()
+    {
+        var (coordinator, _) = CreateCoordinator();
+        const int secondsFromEpoch = 10;
+        var matchTimestamp = DateTimeOffset.UnixEpoch.AddSeconds(secondsFromEpoch).UtcDateTime.Ticks;
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, secondsFromEpoch), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = matchTimestamp + 1 }, CancellationToken.None);
+
+        var response = coordinator.BuildPropResponse(matchTimestamp + 2);
+
+        Assert.Equal(MatchLifecycleState.Running.ToString(), response.Status);
+        Assert.Equal(200_000, response.RemainingTimeMs);
+        Assert.Equal(matchTimestamp, response.Timestamp);
+    }
+
     private static MatchSnapshotDto NewSnapshot(string id, MatchSnapshotStatus status, int remainingMs, long secondsFromEpoch)
     {
         var timestamp = DateTimeOffset.UnixEpoch.AddSeconds(secondsFromEpoch).UtcDateTime.Ticks;

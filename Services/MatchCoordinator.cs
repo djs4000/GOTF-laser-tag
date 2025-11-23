@@ -118,6 +118,30 @@ public sealed class MatchCoordinator
     }
 
     /// <summary>
+    /// Builds the response payload expected by the prop, reflecting the latest known match state.
+    /// </summary>
+    public PropUpdateResponseDto BuildPropResponse(long requestTimestamp)
+    {
+        lock (_sync)
+        {
+            var status = CurrentSnapshot.LifecycleState.ToString();
+            var remaining = CurrentSnapshot.RemainingTimeMs ?? _lastMatchRemainingMs ?? 0;
+            var timestamp = _lastSnapshotTimestamp != 0
+                ? _lastSnapshotTimestamp
+                : _lastPropTimestamp != 0
+                    ? _lastPropTimestamp
+                    : requestTimestamp;
+
+            return new PropUpdateResponseDto
+            {
+                Status = status,
+                RemainingTimeMs = remaining,
+                Timestamp = timestamp
+            };
+        }
+    }
+
+    /// <summary>
     /// Applies a new match snapshot update.
     /// </summary>
     public async Task<MatchStateSnapshot> UpdateMatchSnapshotAsync(MatchSnapshotDto dto, CancellationToken cancellationToken)
