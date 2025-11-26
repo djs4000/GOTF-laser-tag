@@ -5,7 +5,7 @@ namespace LaserTag.Defusal.Domain;
 /// </summary>
 public sealed class UiAutomationOptions
 {
-    public string ProcessName { get; set; } = "ICombat.Desktop";
+    public string ProcessName { get; set; } = "ICombat.Desktop.exe";
 
     public string WindowTitleRegex { get; set; } = "^ICE$";
 
