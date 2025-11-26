@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Drawing;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using LaserTag.Defusal.Domain;
 using LaserTag.Defusal.Services;
@@ -19,8 +20,10 @@ public sealed class StatusForm : Form
     private readonly MatchCoordinator _coordinator;
     private readonly ILogger<StatusForm> _logger;
     private readonly IFocusService _focusService;
+    private readonly MatchOptions _matchOptions;
     private readonly System.Windows.Forms.Timer _refreshTimer;
     private readonly System.Windows.Forms.Timer _focusTimer;
+    private readonly System.Windows.Forms.Timer _debugGameTimer;
     private MatchStateSnapshot _snapshot = MatchStateSnapshot.Default;
     private FocusWindowInfo _focusWindowInfo = FocusWindowInfo.Empty;
 
@@ -31,9 +34,17 @@ public sealed class StatusForm : Form
     private readonly Label _propLabel = new();
     private readonly Label _plantLabel = new();
     private readonly Label _latencyLabel = new();
+    private readonly Label _countdownLabel = new();
+    private readonly Label _matchTimerLabel = new();
     private readonly Label _focusLabel = new();
     private readonly Label _actionLabel = new();
     private readonly Button _focusButton = new();
+    private const double CountdownDebugDurationSec = 5;
+    private const double RunningDebugDurationSec = 219;
+    private double _debugElapsedSec;
+    private double _debugTimerDurationSec;
+    private MatchSnapshotStatus? _debugTimerStatus;
+    private string? _debugMatchId;
 
     [Browsable(false)]
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -49,20 +60,22 @@ public sealed class StatusForm : Form
         _coordinator = coordinator;
         _logger = logger;
         _focusService = focusService;
+        _matchOptions = options.Value;
 
         FormBorderStyle = FormBorderStyle.FixedToolWindow;
         StartPosition = FormStartPosition.Manual;
         TopMost = true;
         ShowInTaskbar = false;
         Text = "ICE Defusal Monitor";
-        AutoSize = true;
-        AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        AutoSize = false;
+        AutoScroll = true;
+        AutoSizeMode = AutoSizeMode.GrowOnly;
 
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 8,
+            RowCount = 11,
             Padding = new Padding(10),
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink
@@ -76,14 +89,25 @@ public sealed class StatusForm : Form
         AddRow(layout, "Match", _matchLabel);
         AddRow(layout, "State", CreateStatePanel());
         AddRow(layout, "Prop", _propLabel);
-        AddRow(layout, "Plant", _plantLabel);
+        AddRow(layout, "Bomb", _plantLabel);
         AddRow(layout, "Clock", _latencyLabel);
+        AddRow(layout, "Countdown", _countdownLabel);
+        AddRow(layout, "Match timer", _matchTimerLabel);
         AddRow(layout, "Focus", CreateFocusPanel());
         AddRow(layout, "Last", _actionLabel);
+        AddRow(layout, "Debug", CreateDebugPanel());
 
         Controls.Add(layout);
 
-        var refreshInterval = Math.Max(100, 1000 / Math.Max(1, options.Value.ClockExpectedHz));
+        layout.PerformLayout();
+        var preferredSize = layout.GetPreferredSize(Size.Empty);
+        var targetHeight = (int)Math.Ceiling(preferredSize.Height * 1.2);
+        var targetSize = new Size(preferredSize.Width, targetHeight);
+        ClientSize = targetSize;
+        MinimumSize = targetSize;
+        MaximumSize = targetSize;
+
+        var refreshInterval = Math.Max(100, 1000 / Math.Max(1, _matchOptions.ClockExpectedHz));
         _refreshTimer = new System.Windows.Forms.Timer { Interval = refreshInterval };
         _refreshTimer.Tick += (_, _) => RenderSnapshot();
         _refreshTimer.Start();
@@ -91,6 +115,9 @@ public sealed class StatusForm : Form
         _focusTimer = new System.Windows.Forms.Timer { Interval = 1000 };
         _focusTimer.Tick += OnFocusTimerTick;
         _focusTimer.Start();
+
+        _debugGameTimer = new System.Windows.Forms.Timer { Interval = 500 };
+        _debugGameTimer.Tick += OnDebugTimerTick;
 
         _coordinator.SnapshotUpdated += OnSnapshotUpdated;
         RenderSnapshot();
@@ -123,6 +150,37 @@ public sealed class StatusForm : Form
 
     private Control CreateFocusPanel()
     {
+        var panel = new TableLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0),
+            Padding = new Padding(0)
+        };
+
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+        _focusLabel.AutoSize = true;
+        _focusLabel.AutoEllipsis = true;
+        _focusLabel.MaximumSize = new Size(280, 0);
+
+        _focusButton.AutoSize = true;
+        _focusButton.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        _focusButton.Margin = new Padding(8, 0, 0, 0);
+        _focusButton.Text = "Focus window";
+        _focusButton.Anchor = AnchorStyles.Right;
+        _focusButton.Click += OnFocusButtonClick;
+
+        panel.Controls.Add(_focusLabel, 0, 0);
+        panel.Controls.Add(_focusButton, 1, 0);
+        return panel;
+    }
+
+    private Control CreateDebugPanel()
+    {
         var panel = new FlowLayoutPanel
         {
             AutoSize = true,
@@ -130,17 +188,31 @@ public sealed class StatusForm : Form
             FlowDirection = FlowDirection.LeftToRight
         };
 
-        _focusLabel.AutoSize = true;
+        panel.Controls.Add(CreateDebugButton("Idle", OnDebugIdleClick));
+        panel.Controls.Add(CreateDebugButton("WaitingOnStart", OnDebugWaitingOnStartClick));
+        panel.Controls.Add(CreateDebugButton("Countdown", OnDebugCountdownClick));
+        panel.Controls.Add(CreateDebugButton("Running", OnDebugRunningClick));
+        panel.Controls.Add(CreateDebugButton("Start timer", OnDebugStartTimerClick));
+        panel.Controls.Add(CreateDebugButton("Stop timer", OnDebugStopTimerClick));
+        panel.Controls.Add(CreateDebugButton("WaitingOnFinalData", OnDebugWaitingOnFinalDataClick));
+        panel.Controls.Add(CreateDebugButton("Completed", OnDebugCompletedClick));
+        panel.Controls.Add(CreateDebugButton("Cancelled", OnDebugCancelledClick));
 
-        _focusButton.AutoSize = true;
-        _focusButton.AutoSizeMode = AutoSizeMode.GrowAndShrink;
-        _focusButton.Margin = new Padding(8, 0, 0, 0);
-        _focusButton.Text = "Focus window";
-        _focusButton.Click += OnFocusButtonClick;
-
-        panel.Controls.Add(_focusLabel);
-        panel.Controls.Add(_focusButton);
         return panel;
+    }
+
+    private Button CreateDebugButton(string text, EventHandler onClick)
+    {
+        var button = new Button
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Text = text,
+            Margin = new Padding(0, 0, 4, 0)
+        };
+
+        button.Click += onClick;
+        return button;
     }
 
     private void AddRow(TableLayoutPanel layout, string label, Control control)
@@ -168,6 +240,146 @@ public sealed class StatusForm : Form
         }
     }
 
+    private async void OnDebugTimerTick(object? sender, EventArgs e)
+    {
+        if (_debugTimerStatus is null)
+        {
+            StopDebugTimer();
+            return;
+        }
+
+        _debugElapsedSec += _debugGameTimer.Interval / 1000.0;
+        var remainingMs = _debugTimerDurationSec > 0
+            ? Math.Max(0, (_debugTimerDurationSec - _debugElapsedSec) * 1000)
+            : (double?)null;
+
+        await SendDebugSnapshotAsync(_debugTimerStatus.Value, _debugElapsedSec, remainingMs).ConfigureAwait(true);
+
+        if (_debugTimerDurationSec > 0 && _debugElapsedSec >= _debugTimerDurationSec)
+        {
+            if (_debugTimerStatus == MatchSnapshotStatus.Countdown)
+            {
+                await StartDebugTimerAsync(MatchSnapshotStatus.Running, RunningDebugDurationSec).ConfigureAwait(true);
+            }
+            else
+            {
+                StopDebugTimer();
+            }
+        }
+    }
+
+    private async Task StartDebugTimerAsync(MatchSnapshotStatus status, double durationSec)
+    {
+        StopDebugTimer();
+        _debugTimerStatus = status;
+        _debugTimerDurationSec = durationSec;
+        _debugElapsedSec = 0;
+
+        await SendDebugSnapshotAsync(status, _debugElapsedSec, durationSec * 1000).ConfigureAwait(true);
+        _debugGameTimer.Start();
+    }
+
+    private void OnDebugIdleClick(object? sender, EventArgs e)
+    {
+        StopDebugTimer();
+        _debugElapsedSec = 0;
+        _debugMatchId = null;
+        _coordinator.SetIdle();
+    }
+
+    private async void OnDebugWaitingOnStartClick(object? sender, EventArgs e)
+    {
+        StopDebugTimer();
+        _debugElapsedSec = 0;
+        await SendDebugSnapshotAsync(MatchSnapshotStatus.WaitingOnStart, _debugElapsedSec).ConfigureAwait(true);
+    }
+
+    private async void OnDebugCountdownClick(object? sender, EventArgs e)
+    {
+        await StartDebugTimerAsync(MatchSnapshotStatus.Countdown, CountdownDebugDurationSec).ConfigureAwait(true);
+    }
+
+    private async void OnDebugRunningClick(object? sender, EventArgs e)
+    {
+        await StartDebugTimerAsync(MatchSnapshotStatus.Running, RunningDebugDurationSec).ConfigureAwait(true);
+    }
+
+    private async void OnDebugStartTimerClick(object? sender, EventArgs e)
+    {
+        await StartDebugTimerAsync(MatchSnapshotStatus.Running, _matchOptions.LtDisplayedDurationSec).ConfigureAwait(true);
+    }
+
+    private void OnDebugStopTimerClick(object? sender, EventArgs e)
+    {
+        StopDebugTimer();
+    }
+
+    private async void OnDebugWaitingOnFinalDataClick(object? sender, EventArgs e)
+    {
+        StopDebugTimer();
+        await SendDebugSnapshotAsync(MatchSnapshotStatus.WaitingOnFinalData, _debugElapsedSec).ConfigureAwait(true);
+    }
+
+    private async void OnDebugCompletedClick(object? sender, EventArgs e)
+    {
+        StopDebugTimer();
+        await SendDebugSnapshotAsync(MatchSnapshotStatus.Completed, _debugElapsedSec, isLastSend: true).ConfigureAwait(true);
+    }
+
+    private async void OnDebugCancelledClick(object? sender, EventArgs e)
+    {
+        StopDebugTimer();
+        await SendDebugSnapshotAsync(MatchSnapshotStatus.Cancelled, _debugElapsedSec, isLastSend: true).ConfigureAwait(true);
+    }
+
+    private void StopDebugTimer()
+    {
+        if (_debugGameTimer.Enabled)
+        {
+            _debugGameTimer.Stop();
+        }
+
+        _debugTimerStatus = null;
+        _debugTimerDurationSec = 0;
+    }
+
+    private void EnsureDebugMatchId()
+    {
+        _debugMatchId ??= $"debug-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
+    }
+
+    private Task SendDebugSnapshotAsync(MatchSnapshotStatus status, double elapsedSeconds, double? remainingMsOverride = null, bool isLastSend = false)
+    {
+        EnsureDebugMatchId();
+        var remainingMs = remainingMsOverride.HasValue
+            ? (int)Math.Max(0, remainingMsOverride.Value)
+            : (int)Math.Max(0, (_matchOptions.LtDisplayedDurationSec - elapsedSeconds) * 1000);
+        var dto = new MatchSnapshotDto
+        {
+            Id = _debugMatchId!,
+            Timestamp = DateTimeOffset.UtcNow.UtcTicks,
+            IsLastSend = isLastSend,
+            Status = status,
+            RemainingTimeMs = remainingMs,
+            WinnerTeam = null
+        };
+
+        return _coordinator.UpdateMatchSnapshotAsync(dto, CancellationToken.None);
+    }
+
+    private static string FormatTimeMs(int? remainingMs)
+    {
+        if (remainingMs is null)
+        {
+            return "—";
+        }
+
+        var totalSeconds = Math.Max(0, remainingMs.Value / 1000);
+        var minutes = totalSeconds / 60;
+        var seconds = totalSeconds % 60;
+        return $"{minutes:0}:{seconds:00}";
+    }
+
     private void RenderSnapshot()
     {
         if (!IsHandleCreated)
@@ -187,6 +399,14 @@ public sealed class StatusForm : Form
         _latencyLabel.Text = snapshot.LastClockLatency.HasValue
             ? $"Latency {snapshot.LastClockLatency.Value.TotalMilliseconds:F0} ms"
             : "Latency —";
+
+        _countdownLabel.Text = snapshot.LifecycleState == MatchLifecycleState.Countdown
+            ? FormatTimeMs(snapshot.RemainingTimeMs)
+            : "—";
+
+        _matchTimerLabel.Text = snapshot.LifecycleState != MatchLifecycleState.Idle
+            ? FormatTimeMs(snapshot.RemainingTimeMs)
+            : "—";
 
         UpdateFocusLabel();
 
@@ -229,6 +449,7 @@ public sealed class StatusForm : Form
             _coordinator.SnapshotUpdated -= OnSnapshotUpdated;
             _refreshTimer.Dispose();
             _focusTimer.Dispose();
+            _debugGameTimer.Dispose();
         }
 
         base.Dispose(disposing);

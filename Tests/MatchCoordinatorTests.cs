@@ -51,7 +51,7 @@ public class MatchCoordinatorTests
         var (coordinator, focus) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Countdown, 400_000, 1), CancellationToken.None);
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, (400 - 181) * 1000, 2), CancellationToken.None);
-        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Planted, Timestamp = 3 }, CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 3 }, CancellationToken.None);
 
         // Before overtime expiry, no trigger.
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, (400 - 200) * 1000, 4), CancellationToken.None);
@@ -65,7 +65,7 @@ public class MatchCoordinatorTests
 
     [Theory]
     [InlineData(PropState.Defused, "defused")]
-    [InlineData(PropState.Exploded, "exploded")]
+    [InlineData(PropState.Detonated, "detonated")]
     public async Task TerminalPropStatesEndImmediately(PropState propState, string expected)
     {
         var (coordinator, focus) = CreateCoordinator();
@@ -81,7 +81,19 @@ public class MatchCoordinatorTests
     {
         var (coordinator, focus) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.WaitingOnStart, 400_000, 1), CancellationToken.None);
-        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Planted, Timestamp = 2 }, CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 2 }, CancellationToken.None);
+        Assert.Equal(0, focus.TriggerCount);
+    }
+
+    [Fact]
+    public async Task PropStateIsCapturedForDisplayWhileInactive()
+    {
+        var (coordinator, focus) = CreateCoordinator();
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.WaitingOnStart, 400_000, 1), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 2 }, CancellationToken.None);
+
+        var snapshot = coordinator.Snapshot();
+        Assert.Equal(PropState.Armed, snapshot.PropState);
         Assert.Equal(0, focus.TriggerCount);
     }
 
@@ -90,7 +102,7 @@ public class MatchCoordinatorTests
     {
         var (coordinator, focus) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, (400 - 190) * 1000, 1), CancellationToken.None);
-        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Exploded, Timestamp = 2 }, CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Detonated, Timestamp = 2 }, CancellationToken.None);
         Assert.Equal(1, focus.TriggerCount);
 
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, (400 - 195) * 1000, 3), CancellationToken.None);
@@ -103,9 +115,25 @@ public class MatchCoordinatorTests
     {
         var (coordinator, _) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, (400 - 123) * 1000, 1), CancellationToken.None);
-        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Planted, Timestamp = 2 }, CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 2 }, CancellationToken.None);
         var snapshot = coordinator.Snapshot();
         Assert.InRange(snapshot.PlantTimeSec ?? double.NaN, 122.5, 123.5);
+    }
+
+    [Fact]
+    public async Task BuildPropResponseReflectsLatestMatchStatus()
+    {
+        var (coordinator, _) = CreateCoordinator();
+        const int secondsFromEpoch = 10;
+        var matchTimestamp = DateTimeOffset.UnixEpoch.AddSeconds(secondsFromEpoch).UtcDateTime.Ticks;
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, secondsFromEpoch), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = matchTimestamp + 1 }, CancellationToken.None);
+
+        var response = coordinator.BuildPropResponse(matchTimestamp + 2);
+
+        Assert.Equal(MatchLifecycleState.Running.ToString(), response.Status);
+        Assert.Equal(200_000, response.RemainingTimeMs);
+        Assert.Equal(matchTimestamp, response.Timestamp);
     }
 
     private static MatchSnapshotDto NewSnapshot(string id, MatchSnapshotStatus status, int remainingMs, long secondsFromEpoch)
