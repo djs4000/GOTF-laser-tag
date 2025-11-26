@@ -87,7 +87,8 @@ internal static class Program
         {
             await coordinator.UpdatePropAsync(dto, cancellationToken).ConfigureAwait(false);
             StampAckHeaders(httpContext.Response, "prop-status");
-            return Results.Accepted();
+            var response = coordinator.BuildPropResponse(dto.Timestamp);
+            return Results.Ok(response);
         });
 
         app.MapPost("/match", async (MatchSnapshotDto dto, MatchCoordinator coordinator, HttpContext httpContext, CancellationToken cancellationToken) =>

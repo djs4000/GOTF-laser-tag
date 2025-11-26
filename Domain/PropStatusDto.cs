@@ -12,4 +12,10 @@ public sealed class PropStatusDto
 
     [JsonPropertyName("state")]
     public required PropState State { get; init; }
+
+    /// <summary>
+    /// Remaining milliseconds reported by the prop when it is armed.
+    /// </summary>
+    [JsonPropertyName("timer")]
+    public int? TimerMs { get; init; }
 }

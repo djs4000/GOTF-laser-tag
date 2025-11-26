@@ -8,6 +8,7 @@ public sealed record MatchStateSnapshot(
     MatchLifecycleState LifecycleState,
     PropState PropState,
     double? PlantTimeSec,
+    int? RemainingTimeMs,
     bool IsOvertime,
     double? OvertimeRemainingSec,
     DateTimeOffset? LastPropUpdate,
@@ -18,14 +19,15 @@ public sealed record MatchStateSnapshot(
 {
     public static readonly MatchStateSnapshot Default = new(
         MatchId: null,
-        LifecycleState: MatchLifecycleState.Freezetime,
+        LifecycleState: MatchLifecycleState.Idle,
         PropState: PropState.Idle,
         PlantTimeSec: null,
+        RemainingTimeMs: null,
         IsOvertime: false,
         OvertimeRemainingSec: null,
         LastPropUpdate: null,
         LastClockUpdate: null,
         LastClockLatency: null,
-        LastActionDescription: "Idle",
+        LastActionDescription: "Idle (no match data)",
         FocusAcquired: false);
 }
