@@ -246,15 +246,15 @@ public sealed class FocusService : IFocusService
         if (_hardwareShortcutSender?.IsReady == true)
         {
             hardwareResult = await _hardwareShortcutSender.TrySendCtrlSAsync(cancellationToken).ConfigureAwait(true);
-            if (hardwareResult.Succeeded)
+            if (hardwareResult?.Succeeded == true)
             {
-                var hardwareDescription = hardwareResult.PathHint is null
+                var hardwareDescription = hardwareResult.Value.PathHint is null
                     ? "Sent Ctrl+S via virtual HID (ViGEmBus/HidHide)"
-                    : $"Sent Ctrl+S via {hardwareResult.PathHint}";
+                    : $"Sent Ctrl+S via {hardwareResult.Value.PathHint}";
                 return (true, $"{hardwareDescription} at {DateTimeOffset.Now:HH:mm:ss}");
             }
 
-            _logger.LogWarning("Hardware shortcut injection failed: {Reason}", hardwareResult.ErrorMessage);
+            _logger.LogWarning("Hardware shortcut injection failed: {Reason}", hardwareResult?.ErrorMessage);
         }
 
         if (TrySendShortcut(out var errorMessage, out var lastError))
@@ -268,7 +268,7 @@ public sealed class FocusService : IFocusService
             failureDescription += "; target process is elevated—run this app as administrator";
         }
 
-        if (hardwareResult is null || hardwareResult.ErrorMessage is null)
+        if (hardwareResult is null || hardwareResult.Value.ErrorMessage is null)
         {
             failureDescription += "; ViGEmBus/HidHide may be missing or unavailable";
         }
