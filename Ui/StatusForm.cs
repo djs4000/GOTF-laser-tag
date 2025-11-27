@@ -125,7 +125,7 @@ public sealed class StatusForm : Form
 
         layout.PerformLayout();
         var preferredSize = layout.GetPreferredSize(Size.Empty);
-        var targetHeight = (int)Math.Ceiling(preferredSize.Height * 2);
+        var targetHeight = (int)Math.Ceiling(preferredSize.Height * 2d);
         var targetWidth = (int)Math.Ceiling(preferredSize.Width * 1.15);
         var targetSize = new Size(targetWidth, targetHeight);
         ClientSize = targetSize;
