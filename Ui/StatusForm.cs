@@ -90,36 +90,36 @@ public sealed class StatusForm : Form
 
         ConfigureHttpLabel(endpointMetadata);
 
-        var httpPanel = CreateSectionPanel("Listening IPs");
-        var httpRow = 1;
-        httpRow = AddRow(httpPanel, httpRow, "Endpoints", _httpLabel);
-        layout.Controls.Add(httpPanel, 0, 0);
-        layout.SetColumnSpan(httpPanel, 3);
+        var httpSection = CreateSectionPanel("Listening IPs");
+        var httpRow = 0;
+        httpRow = AddRow(httpSection.panel, httpRow, "Endpoints", _httpLabel);
+        layout.Controls.Add(httpSection.container, 0, 0);
+        layout.SetColumnSpan(httpSection.container, 3);
 
-        var matchPanel = CreateSectionPanel("Match");
-        var matchRow = 1;
-        matchRow = AddRow(matchPanel, matchRow, "Match ID", _matchLabel);
-        matchRow = AddRow(matchPanel, matchRow, "State", CreateStatePanel());
-        matchRow = AddRow(matchPanel, matchRow, "Timer", _matchTimerLabel);
-        matchRow = AddRow(matchPanel, matchRow, "Latency", _matchLatencyLabel);
-        layout.Controls.Add(matchPanel, 0, 1);
+        var matchSection = CreateSectionPanel("Match");
+        var matchRow = 0;
+        matchRow = AddRow(matchSection.panel, matchRow, "Match ID", _matchLabel);
+        matchRow = AddRow(matchSection.panel, matchRow, "State", CreateStatePanel());
+        matchRow = AddRow(matchSection.panel, matchRow, "Timer", _matchTimerLabel);
+        matchRow = AddRow(matchSection.panel, matchRow, "Latency", _matchLatencyLabel);
+        layout.Controls.Add(matchSection.container, 0, 1);
 
-        var propPanel = CreateSectionPanel("Prop");
-        var propRow = 1;
-        propRow = AddRow(propPanel, propRow, "State", _propLabel);
-        propRow = AddRow(propPanel, propRow, "Timer", _defuseTimerLabel);
-        propRow = AddRow(propPanel, propRow, "Latency", _propLatencyLabel);
-        layout.Controls.Add(propPanel, 1, 1);
+        var propSection = CreateSectionPanel("Prop");
+        var propRow = 0;
+        propRow = AddRow(propSection.panel, propRow, "State", _propLabel);
+        propRow = AddRow(propSection.panel, propRow, "Timer", _defuseTimerLabel);
+        propRow = AddRow(propSection.panel, propRow, "Latency", _propLatencyLabel);
+        layout.Controls.Add(propSection.container, 1, 1);
 
-        var configPanel = CreateSectionPanel("Game configuration");
-        var configRow = 1;
+        var configSection = CreateSectionPanel("Game configuration");
+        var configRow = 0;
         var configPlaceholder = new Label
         {
             AutoSize = true,
             Text = "Coming soon"
         };
-        configRow = AddRow(configPanel, configRow, "Status", configPlaceholder);
-        layout.Controls.Add(configPanel, 2, 1);
+        configRow = AddRow(configSection.panel, configRow, "Status", configPlaceholder);
+        layout.Controls.Add(configSection.container, 2, 1);
 
         Controls.Add(layout);
 
@@ -241,7 +241,7 @@ public sealed class StatusForm : Form
         return button;
     }
 
-    private TableLayoutPanel CreateSectionPanel(string title)
+    private (GroupBox container, TableLayoutPanel panel) CreateSectionPanel(string title)
     {
         var panel = new TableLayoutPanel
         {
@@ -249,26 +249,26 @@ public sealed class StatusForm : Form
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 2,
             Dock = DockStyle.Fill,
-            Margin = new Padding(4),
-            Padding = new Padding(6)
+            Margin = new Padding(0),
+            Padding = new Padding(0)
         };
 
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
-        var titleLabel = new Label
+        var groupBox = new GroupBox
         {
-            Text = title,
             AutoSize = true,
-            Font = new Font(Font, FontStyle.Bold),
-            Padding = new Padding(0, 0, 0, 6)
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(6),
+            Padding = new Padding(10),
+            Text = title
         };
 
-        panel.Controls.Add(titleLabel, 0, 0);
-        panel.SetColumnSpan(titleLabel, 2);
-        panel.RowCount = 1;
-        return panel;
+        groupBox.Controls.Add(panel);
+        panel.RowCount = 0;
+        return (groupBox, panel);
     }
 
     private static int AddRow(TableLayoutPanel layout, int rowIndex, string label, Control control)
