@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -21,6 +22,7 @@ public sealed class FocusService : IFocusService
     private readonly UiAutomationOptions _options;
     private readonly Regex _titleRegex;
     private readonly string _targetProcessName;
+    private readonly bool _isCurrentProcessElevated;
     private SynchronizationContext? _uiContext;
 
     public FocusService(IOptions<UiAutomationOptions> options, ILogger<FocusService> logger)
@@ -29,6 +31,7 @@ public sealed class FocusService : IFocusService
         _options = options.Value;
         _titleRegex = new Regex(_options.WindowTitleRegex, RegexOptions.Compiled | RegexOptions.IgnoreCase);
         _targetProcessName = Path.GetFileNameWithoutExtension(_options.ProcessName);
+        _isCurrentProcessElevated = IsCurrentProcessElevated();
     }
 
     /// <summary>
@@ -85,6 +88,12 @@ public sealed class FocusService : IFocusService
             return new FocusActionResult(false, message);
         }
 
+        var elevationKnown = TryGetElevation(targetProcess, out var isTargetElevated);
+        if (!elevationKnown)
+        {
+            _logger.LogDebug("Unable to determine elevation for process {ProcessId}", targetProcess.Id);
+        }
+
         var handle = targetProcess.MainWindowHandle;
         NativeMethods.ShowWindow(handle, NativeMethods.SW_RESTORE);
 
@@ -119,6 +128,10 @@ public sealed class FocusService : IFocusService
                 if (!TrySendShortcut(out var errorMessage, out var lastError))
                 {
                     var failureDescription = $"Failed to send shortcut: {errorMessage}; win32={lastError}";
+                    if (!_isCurrentProcessElevated && elevationKnown && isTargetElevated)
+                    {
+                        failureDescription += "; target process is elevated—run this app as administrator";
+                    }
                     _logger.LogWarning("{Description} ({Reason})", failureDescription, reason);
                     return new FocusActionResult(false, failureDescription);
                 }
@@ -243,6 +256,56 @@ public sealed class FocusService : IFocusService
         errorMessage = null;
         lastError = 0;
         return true;
+    }
+
+    private static bool TryGetElevation(Process process, out bool isElevated)
+    {
+        isElevated = false;
+        IntPtr tokenHandle = IntPtr.Zero;
+        IntPtr buffer = IntPtr.Zero;
+
+        try
+        {
+            if (!NativeMethods.OpenProcessToken(process.Handle, NativeMethods.TOKEN_QUERY, out tokenHandle))
+            {
+                return false;
+            }
+
+            var elevationSize = Marshal.SizeOf<NativeMethods.TOKEN_ELEVATION>();
+            buffer = Marshal.AllocHGlobal(elevationSize);
+
+            if (!NativeMethods.GetTokenInformation(tokenHandle, NativeMethods.TokenElevation, buffer, elevationSize, out _))
+            {
+                return false;
+            }
+
+            var elevation = Marshal.PtrToStructure<NativeMethods.TOKEN_ELEVATION>(buffer);
+            isElevated = elevation.TokenIsElevated != 0;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (buffer != IntPtr.Zero)
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+
+            if (tokenHandle != IntPtr.Zero)
+            {
+                NativeMethods.CloseHandle(tokenHandle);
+            }
+        }
+    }
+
+    private static bool IsCurrentProcessElevated()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        var principal = new WindowsPrincipal(identity);
+        return principal.IsInRole(WindowsBuiltInRole.Administrator);
     }
 
     private static NativeMethods.INPUT CreateKeyDown(ushort key)
