@@ -234,23 +234,21 @@ public sealed class FocusService : IFocusService
             : null;
     }
 
-    private static async Task<bool> TrySendShortcutAsync(CancellationToken cancellationToken)
+    private static Task<bool> TrySendShortcutAsync(CancellationToken cancellationToken)
     {
         try
         {
-            // Mirror the WinForms-friendly approach validated in the debug stub: allow the UI thread to breathe
-            // and then issue the chord via SendKeys so it is delivered to the foreground window.
-            await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(true);
+            cancellationToken.ThrowIfCancellationRequested();
             SendKeys.SendWait("^s");
-            return true;
+            return Task.FromResult(true);
         }
         catch (OperationCanceledException)
         {
-            return false;
+            return Task.FromResult(false);
         }
         catch (Exception)
         {
-            return false;
+            return Task.FromResult(false);
         }
     }
 
