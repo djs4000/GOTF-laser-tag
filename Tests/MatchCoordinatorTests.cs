@@ -152,6 +152,116 @@ public class MatchCoordinatorTests
     }
 
     [Fact]
+    public async Task MaintainsPropStateDuringWaitingOnStartSnapshots()
+    {
+        var (coordinator, _) = CreateCoordinator();
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.WaitingOnStart, 400_000, 1), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Ready, Timestamp = 2 }, CancellationToken.None);
+
+        // A follow-up snapshot in the same state should not reset the prop back to Idle.
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.WaitingOnStart, 399_000, 3), CancellationToken.None);
+
+        var snapshot = coordinator.Snapshot();
+        Assert.Equal(PropState.Ready, snapshot.PropState);
+    }
+
+    [Fact]
+    public async Task ParsesUnixSecondTimestampsForLatency()
+    {
+        var (coordinator, _) = CreateCoordinator();
+        var unixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var dto = new MatchSnapshotDto
+        {
+            Id = "match",
+            Status = MatchSnapshotStatus.Running,
+            RemainingTimeMs = 200_000,
+            Timestamp = unixSeconds,
+            WinnerTeam = null,
+            IsLastSend = false,
+            Players = Array.Empty<MatchPlayerSnapshotDto>()
+        };
+
+        await coordinator.UpdateMatchSnapshotAsync(dto, CancellationToken.None);
+        var latency = coordinator.Snapshot().LastClockLatency;
+
+        Assert.NotNull(latency);
+        Assert.InRange(latency!.Value.TotalMilliseconds, 0, 5_000);
+    }
+
+    [Fact]
+    public async Task FutureClockTimestampsClampToZeroLatency()
+    {
+        var (coordinator, _) = CreateCoordinator();
+        var futureTimestamp = DateTimeOffset.UtcNow.AddSeconds(2).ToUnixTimeMilliseconds();
+        var dto = new MatchSnapshotDto
+        {
+            Id = "match",
+            Status = MatchSnapshotStatus.Running,
+            RemainingTimeMs = 200_000,
+            Timestamp = futureTimestamp,
+            WinnerTeam = null,
+            IsLastSend = false,
+            Players = Array.Empty<MatchPlayerSnapshotDto>()
+        };
+
+        await coordinator.UpdateMatchSnapshotAsync(dto, CancellationToken.None);
+        var latency = coordinator.Snapshot().LastClockLatency;
+
+        Assert.Equal(TimeSpan.Zero, latency);
+    }
+
+    [Fact]
+    public async Task ComputesPropLatencyFromUnixSeconds()
+    {
+        var (coordinator, _) = CreateCoordinator();
+        var propTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, propTimestamp), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = propTimestamp }, CancellationToken.None);
+
+        var latency = coordinator.Snapshot().LastPropLatency;
+
+        Assert.NotNull(latency);
+        Assert.InRange(latency!.Value.TotalMilliseconds, 0, 5_000);
+    }
+
+    [Fact]
+    public async Task FuturePropTimestampsClampToZeroLatency()
+    {
+        var (coordinator, _) = CreateCoordinator();
+        var futureTimestamp = DateTimeOffset.UtcNow.AddSeconds(2).ToUnixTimeMilliseconds();
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, DateTimeOffset.UtcNow.ToUnixTimeSeconds()), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = futureTimestamp }, CancellationToken.None);
+
+        var latency = coordinator.Snapshot().LastPropLatency;
+
+        Assert.Equal(TimeSpan.Zero, latency);
+    }
+
+    [Fact]
+    public async Task PropTimerCountsDownBetweenUpdates()
+    {
+        var (coordinator, _) = CreateCoordinator();
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, 1), CancellationToken.None);
+
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 2, TimerMs = 40_000 }, CancellationToken.None);
+        var initial = coordinator.Snapshot().PropTimerRemainingMs;
+
+        Assert.NotNull(initial);
+        Assert.InRange(initial!.Value, 39_000, 40_000);
+
+        await Task.Delay(120);
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 199_000, 3), CancellationToken.None);
+        var updated = coordinator.Snapshot().PropTimerRemainingMs;
+
+        Assert.NotNull(updated);
+        Assert.True(updated!.Value < initial.Value);
+        Assert.InRange(updated.Value, initial.Value - 400, initial.Value);
+    }
+
+    [Fact]
     public async Task AllowsNewMatchAfterTerminalState()
     {
         var (coordinator, _) = CreateCoordinator();
