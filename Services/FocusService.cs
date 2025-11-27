@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows.Forms;
 using LaserTag.Defusal.Domain;
 using LaserTag.Defusal.Interop;
 using Microsoft.Extensions.Logging;
@@ -125,13 +126,11 @@ public sealed class FocusService : IFocusService
 
             if (sendShortcut)
             {
-                if (!TrySendShortcut(out var errorMessage, out var lastError))
+                if (!await TrySendShortcutAsync(cancellationToken).ConfigureAwait(true))
                 {
-                    var failureDescription = $"Failed to send shortcut: {errorMessage}; win32={lastError}";
-                    if (!_isCurrentProcessElevated && elevationKnown && isTargetElevated)
-                    {
-                        failureDescription += "; target process is elevated—run this app as administrator";
-                    }
+                    var failureDescription = !_isCurrentProcessElevated && elevationKnown && isTargetElevated
+                        ? "Failed to send shortcut; target process is elevated—run this app as administrator"
+                        : "Failed to send shortcut";
                     _logger.LogWarning("{Description} ({Reason})", failureDescription, reason);
                     return new FocusActionResult(false, failureDescription);
                 }
@@ -235,27 +234,22 @@ public sealed class FocusService : IFocusService
             : null;
     }
 
-    private static bool TrySendShortcut(out string? errorMessage, out int lastError)
+    private static Task<bool> TrySendShortcutAsync(CancellationToken cancellationToken)
     {
-        var inputs = new[]
+        try
         {
-            CreateKeyDown(NativeMethods.VK_CONTROL),
-            CreateKeyDown(NativeMethods.VK_S),
-            CreateKeyUp(NativeMethods.VK_S),
-            CreateKeyUp(NativeMethods.VK_CONTROL)
-        };
-
-        var sent = NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeMethods.INPUT>());
-        if (sent != inputs.Length)
-        {
-            errorMessage = $"SendInput sent {sent}/{inputs.Length} inputs";
-            lastError = Marshal.GetLastPInvokeError();
-            return false;
+            cancellationToken.ThrowIfCancellationRequested();
+            SendKeys.SendWait("^s");
+            return Task.FromResult(true);
         }
-
-        errorMessage = null;
-        lastError = 0;
-        return true;
+        catch (OperationCanceledException)
+        {
+            return Task.FromResult(false);
+        }
+        catch (Exception)
+        {
+            return Task.FromResult(false);
+        }
     }
 
     private static bool TryGetElevation(Process process, out bool isElevated)
@@ -306,40 +300,6 @@ public sealed class FocusService : IFocusService
         using var identity = WindowsIdentity.GetCurrent();
         var principal = new WindowsPrincipal(identity);
         return principal.IsInRole(WindowsBuiltInRole.Administrator);
-    }
-
-    private static NativeMethods.INPUT CreateKeyDown(ushort key)
-    {
-        return new NativeMethods.INPUT
-        {
-            type = NativeMethods.INPUT_KEYBOARD,
-            U = new NativeMethods.InputUnion
-            {
-                ki = new NativeMethods.KEYBDINPUT
-                {
-                    wVk = key,
-                    dwFlags = 0,
-                    dwExtraInfo = IntPtr.Zero
-                }
-            }
-        };
-    }
-
-    private static NativeMethods.INPUT CreateKeyUp(ushort key)
-    {
-        return new NativeMethods.INPUT
-        {
-            type = NativeMethods.INPUT_KEYBOARD,
-            U = new NativeMethods.InputUnion
-            {
-                ki = new NativeMethods.KEYBDINPUT
-                {
-                    wVk = key,
-                    dwFlags = NativeMethods.KEYEVENTF_KEYUP,
-                    dwExtraInfo = IntPtr.Zero
-                }
-            }
-        };
     }
 
 }
