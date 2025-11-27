@@ -118,22 +118,22 @@ public sealed class FocusService : IFocusService
             {
                 if (!TrySendShortcut(out var errorMessage, out var lastError))
                 {
-                    var description = $"Failed to send shortcut: {errorMessage}; win32={lastError}";
-                    _logger.LogWarning("{Description} ({Reason})", description, reason);
-                    return new FocusActionResult(false, description);
+                    var failureDescription = $"Failed to send shortcut: {errorMessage}; win32={lastError}";
+                    _logger.LogWarning("{Description} ({Reason})", failureDescription, reason);
+                    return new FocusActionResult(false, failureDescription);
                 }
 
                 await Task.Delay(_options.PostShortcutDelayMs, cancellationToken).ConfigureAwait(true);
 
-                var description = $"Sent Ctrl+S at {DateTimeOffset.Now:HH:mm:ss}";
-                _logger.LogInformation("{Description} due to {Reason}", description, reason);
-                return new FocusActionResult(true, description);
+                var successDescription = $"Sent Ctrl+S at {DateTimeOffset.Now:HH:mm:ss}";
+                _logger.LogInformation("{Description} due to {Reason}", successDescription, reason);
+                return new FocusActionResult(true, successDescription);
             }
             else
             {
-                var description = $"Focused target window at {DateTimeOffset.Now:HH:mm:ss}";
-                _logger.LogInformation("{Description} ({Reason})", description, reason);
-                return new FocusActionResult(true, description);
+                var focusOnlyDescription = $"Focused target window at {DateTimeOffset.Now:HH:mm:ss}";
+                _logger.LogInformation("{Description} ({Reason})", focusOnlyDescription, reason);
+                return new FocusActionResult(true, focusOnlyDescription);
             }
         }
         finally
