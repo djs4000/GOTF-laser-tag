@@ -119,7 +119,7 @@ public sealed class FocusService : IFocusService
                 SendShortcut();
                 await Task.Delay(_options.PostShortcutDelayMs, cancellationToken).ConfigureAwait(true);
 
-                var description = $"Sent Ctrl+F at {DateTimeOffset.Now:HH:mm:ss}";
+                var description = $"Sent Ctrl+S at {DateTimeOffset.Now:HH:mm:ss}";
                 _logger.LogInformation("{Description} due to {Reason}", description, reason);
                 return new FocusActionResult(true, description);
             }
@@ -221,8 +221,8 @@ public sealed class FocusService : IFocusService
         var inputs = new[]
         {
             CreateKeyDown(NativeMethods.VK_CONTROL),
-            CreateKeyDown(NativeMethods.VK_F),
-            CreateKeyUp(NativeMethods.VK_F),
+            CreateKeyDown(NativeMethods.VK_S),
+            CreateKeyUp(NativeMethods.VK_S),
             CreateKeyUp(NativeMethods.VK_CONTROL)
         };
 
