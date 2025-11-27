@@ -151,17 +151,12 @@ public sealed class MatchCoordinator
         lock (_sync)
         {
             var now = DateTimeOffset.UtcNow;
-            DateTimeOffset sourceTimestamp;
-            try
-            {
-                sourceTimestamp = new DateTimeOffset(new DateTime(dto.Timestamp, DateTimeKind.Utc));
-            }
-            catch (ArgumentOutOfRangeException)
-            {
-                _logger.LogWarning("Match snapshot timestamp {Timestamp} is out of range", dto.Timestamp);
-                sourceTimestamp = now;
-            }
+            var sourceTimestamp = ParseSnapshotTimestamp(dto.Timestamp, now);
             _lastClockLatency = now - sourceTimestamp;
+            if (_lastClockLatency < TimeSpan.Zero)
+            {
+                _lastClockLatency = TimeSpan.Zero;
+            }
 
             if (string.IsNullOrWhiteSpace(dto.Id))
             {
@@ -222,13 +217,11 @@ public sealed class MatchCoordinator
                     _matchEnded = false;
                     _lifecycleState = MatchLifecycleState.WaitingOnStart;
                     _plantTimeSec = null;
-                    _propState = PropState.Idle;
                     break;
                 case MatchSnapshotStatus.Countdown:
                     _matchEnded = false;
                     _lifecycleState = MatchLifecycleState.Countdown;
                     _plantTimeSec = null;
-                    _propState = PropState.Idle;
                     break;
                 case MatchSnapshotStatus.Running:
                     if (!_matchEnded)
@@ -430,6 +423,30 @@ public sealed class MatchCoordinator
         _focusAcquired = false;
         _lastPropPayload = null;
         _lastSnapshotPayload = null;
+    }
+
+    private static DateTimeOffset ParseSnapshotTimestamp(long timestamp, DateTimeOffset fallback)
+    {
+        try
+        {
+            // Prefer ticks when the payload uses DateTime ticks, otherwise interpret large numbers
+            // as milliseconds and smaller values as Unix seconds.
+            if (timestamp >= 1_000_000_000_000_000)
+            {
+                return new DateTimeOffset(new DateTime(timestamp, DateTimeKind.Utc));
+            }
+
+            if (timestamp >= 10_000_000_000)
+            {
+                return DateTimeOffset.FromUnixTimeMilliseconds(timestamp);
+            }
+
+            return DateTimeOffset.FromUnixTimeSeconds(timestamp);
+        }
+        catch (Exception)
+        {
+            return fallback;
+        }
     }
 
     private async Task TriggerEndMatchAsync(string reason, CancellationToken cancellationToken)
