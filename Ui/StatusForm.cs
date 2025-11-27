@@ -75,36 +75,59 @@ public sealed class StatusForm : Form
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 2,
-            RowCount = 12,
+            ColumnCount = 3,
+            RowCount = 2,
             Padding = new Padding(10),
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink
         };
 
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         ConfigureHttpLabel(endpointMetadata);
-        AddRow(layout, "HTTP", _httpLabel);
-        AddRow(layout, "Match", _matchLabel);
-        AddRow(layout, "State", CreateStatePanel());
-        AddRow(layout, "Prop", _propLabel);
-        AddRow(layout, "Bomb", _plantLabel);
-        AddRow(layout, "Match clock", _matchLatencyLabel);
-        AddRow(layout, "Prop clock", _propLatencyLabel);
-        AddRow(layout, "Defuse timer", _defuseTimerLabel);
-        AddRow(layout, "Match timer", _matchTimerLabel);
-        AddRow(layout, "Focus", CreateFocusPanel());
-        AddRow(layout, "Last", _actionLabel);
-        AddRow(layout, "Debug", CreateDebugPanel());
+
+        var httpSection = CreateSectionPanel("Listening IPs");
+        var httpRow = 0;
+        httpRow = AddRow(httpSection.panel, httpRow, "Endpoints", _httpLabel);
+        layout.Controls.Add(httpSection.container, 0, 0);
+        layout.SetColumnSpan(httpSection.container, 3);
+
+        var matchSection = CreateSectionPanel("Match");
+        var matchRow = 0;
+        matchRow = AddRow(matchSection.panel, matchRow, "Match ID", _matchLabel);
+        matchRow = AddRow(matchSection.panel, matchRow, "State", CreateStatePanel());
+        matchRow = AddRow(matchSection.panel, matchRow, "Timer", _matchTimerLabel);
+        matchRow = AddRow(matchSection.panel, matchRow, "Latency", _matchLatencyLabel);
+        layout.Controls.Add(matchSection.container, 0, 1);
+
+        var propSection = CreateSectionPanel("Prop");
+        var propRow = 0;
+        propRow = AddRow(propSection.panel, propRow, "State", _propLabel);
+        propRow = AddRow(propSection.panel, propRow, "Timer", _defuseTimerLabel);
+        propRow = AddRow(propSection.panel, propRow, "Latency", _propLatencyLabel);
+        layout.Controls.Add(propSection.container, 1, 1);
+
+        var configSection = CreateSectionPanel("Game configuration");
+        var configRow = 0;
+        var configPlaceholder = new Label
+        {
+            AutoSize = true,
+            Text = "Coming soon"
+        };
+        configRow = AddRow(configSection.panel, configRow, "Status", configPlaceholder);
+        layout.Controls.Add(configSection.container, 2, 1);
 
         Controls.Add(layout);
 
         layout.PerformLayout();
         var preferredSize = layout.GetPreferredSize(Size.Empty);
-        var targetHeight = (int)Math.Ceiling(preferredSize.Height * 1.2);
-        var targetSize = new Size(preferredSize.Width, targetHeight);
+        var targetHeight = (int)Math.Ceiling(preferredSize.Height * 2d);
+        var targetWidth = (int)Math.Ceiling(preferredSize.Width * 1.15);
+        var targetSize = new Size(targetWidth, targetHeight);
         ClientSize = targetSize;
         MinimumSize = targetSize;
         MaximumSize = targetSize;
@@ -218,8 +241,41 @@ public sealed class StatusForm : Form
         return button;
     }
 
-    private void AddRow(TableLayoutPanel layout, string label, Control control)
+    private (GroupBox container, TableLayoutPanel panel) CreateSectionPanel(string title)
     {
+        var panel = new TableLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0),
+            Padding = new Padding(0)
+        };
+
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+        var groupBox = new GroupBox
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(6),
+            Padding = new Padding(10),
+            Text = title
+        };
+
+        groupBox.Controls.Add(panel);
+        panel.RowCount = 0;
+        return (groupBox, panel);
+    }
+
+    private static int AddRow(TableLayoutPanel layout, int rowIndex, string label, Control control)
+    {
+        layout.RowCount = Math.Max(layout.RowCount, rowIndex + 1);
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
         var header = new Label
         {
             Text = label + ":",
@@ -230,8 +286,9 @@ public sealed class StatusForm : Form
 
         control.AutoSize = true;
         control.Margin = new Padding(0, 3, 0, 3);
-        layout.Controls.Add(header);
-        layout.Controls.Add(control);
+        layout.Controls.Add(header, 0, rowIndex);
+        layout.Controls.Add(control, 1, rowIndex);
+        return rowIndex + 1;
     }
 
     private void OnSnapshotUpdated(object? sender, MatchStateSnapshot snapshot)
@@ -465,8 +522,21 @@ public sealed class StatusForm : Form
 
         var snapshot = _snapshot;
         _matchLabel.Text = snapshot.MatchId ?? "—";
-        _stateLabel.Text = snapshot.LifecycleState.ToString();
-        _propLabel.Text = snapshot.PropState.ToString();
+        var hasMatchData = snapshot.MatchId is not null
+            || snapshot.LastClockUpdate is not null
+            || snapshot.LifecycleState != MatchLifecycleState.Idle;
+
+        _stateLabel.Text = hasMatchData
+            ? snapshot.LifecycleState.ToString()
+            : "—";
+
+        var hasPropData = snapshot.LastPropUpdate is not null
+            || snapshot.PropTimerRemainingMs is not null
+            || snapshot.PropState != PropState.Idle;
+
+        _propLabel.Text = hasPropData
+            ? snapshot.PropState.ToString()
+            : "—";
 
         _plantLabel.Text = snapshot.PlantTimeSec.HasValue
             ? $"{snapshot.PlantTimeSec.Value:F1}s"
