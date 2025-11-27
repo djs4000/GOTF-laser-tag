@@ -197,6 +197,7 @@ public sealed class StatusForm : Form
         panel.Controls.Add(CreateDebugButton("WaitingOnFinalData", OnDebugWaitingOnFinalDataClick));
         panel.Controls.Add(CreateDebugButton("Completed", OnDebugCompletedClick));
         panel.Controls.Add(CreateDebugButton("Cancelled", OnDebugCancelledClick));
+        panel.Controls.Add(CreateDebugButton("Debug Ctrl+S", OnDebugEndMatchClick));
 
         return panel;
     }
@@ -330,6 +331,40 @@ public sealed class StatusForm : Form
     {
         StopDebugTimer();
         await SendDebugSnapshotAsync(MatchSnapshotStatus.Cancelled, _debugElapsedSec, isLastSend: true).ConfigureAwait(true);
+    }
+
+    private async void OnDebugEndMatchClick(object? sender, EventArgs e)
+    {
+        var button = sender as Button;
+        try
+        {
+            if (button is not null)
+            {
+                button.Enabled = false;
+            }
+
+            var result = await _focusService.TryEndMatchAsync("Debug end-match shortcut", CancellationToken.None).ConfigureAwait(true);
+            var description = result.FocusAcquired
+                ? $"Debug shortcut succeeded: {result.Description}"
+                : $"Debug shortcut failed: {result.Description}";
+            _coordinator.ReportFocusResult(result.FocusAcquired, description);
+            if (!result.FocusAcquired)
+            {
+                _logger.LogWarning("Debug shortcut failed: {Description}", result.Description);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Debug shortcut attempt threw an exception");
+            _coordinator.ReportFocusResult(false, "Debug shortcut encountered an error");
+        }
+        finally
+        {
+            if (button is not null)
+            {
+                button.Enabled = true;
+            }
+        }
     }
 
     private void StopDebugTimer()
