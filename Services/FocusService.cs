@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Text;
@@ -23,6 +24,8 @@ public sealed class FocusService : IFocusService
     private readonly Regex _titleRegex;
     private readonly string _targetProcessName;
     private readonly bool _isCurrentProcessElevated;
+    private bool _hardwareInitAttempted;
+    private HardwareShortcutSender? _hardwareShortcutSender;
     private SynchronizationContext? _uiContext;
 
     public FocusService(IOptions<UiAutomationOptions> options, ILogger<FocusService> logger)
@@ -125,22 +128,17 @@ public sealed class FocusService : IFocusService
 
             if (sendShortcut)
             {
-                if (!TrySendShortcut(out var errorMessage, out var lastError))
+                var shortcutResult = await TrySendShortcutAsync(elevationKnown, isTargetElevated, cancellationToken).ConfigureAwait(true);
+                if (!shortcutResult.Success)
                 {
-                    var failureDescription = $"Failed to send shortcut: {errorMessage}; win32={lastError}";
-                    if (!_isCurrentProcessElevated && elevationKnown && isTargetElevated)
-                    {
-                        failureDescription += "; target process is elevated—run this app as administrator";
-                    }
-                    _logger.LogWarning("{Description} ({Reason})", failureDescription, reason);
-                    return new FocusActionResult(false, failureDescription);
+                    _logger.LogWarning("{Description} ({Reason})", shortcutResult.Description, reason);
+                    return new FocusActionResult(false, shortcutResult.Description);
                 }
 
                 await Task.Delay(_options.PostShortcutDelayMs, cancellationToken).ConfigureAwait(true);
 
-                var successDescription = $"Sent Ctrl+S at {DateTimeOffset.Now:HH:mm:ss}";
-                _logger.LogInformation("{Description} due to {Reason}", successDescription, reason);
-                return new FocusActionResult(true, successDescription);
+                _logger.LogInformation("{Description} due to {Reason}", shortcutResult.Description, reason);
+                return new FocusActionResult(true, shortcutResult.Description);
             }
             else
             {
@@ -233,6 +231,49 @@ public sealed class FocusService : IFocusService
         return NativeMethods.GetWindowText(handle, buffer, buffer.Capacity) > 0
             ? buffer.ToString()
             : null;
+    }
+
+    private async Task<(bool Success, string Description)> TrySendShortcutAsync(bool elevationKnown, bool isTargetElevated, CancellationToken cancellationToken)
+    {
+        ShortcutSendResult? hardwareResult = null;
+
+        if (!_hardwareInitAttempted)
+        {
+            _hardwareInitAttempted = true;
+            _hardwareShortcutSender = await HardwareShortcutSender.CreateAsync(_logger, cancellationToken).ConfigureAwait(true);
+        }
+
+        if (_hardwareShortcutSender?.IsReady == true)
+        {
+            hardwareResult = await _hardwareShortcutSender.TrySendCtrlSAsync(cancellationToken).ConfigureAwait(true);
+            if (hardwareResult.Succeeded)
+            {
+                var hardwareDescription = hardwareResult.PathHint is null
+                    ? "Sent Ctrl+S via virtual HID (ViGEmBus/HidHide)"
+                    : $"Sent Ctrl+S via {hardwareResult.PathHint}";
+                return (true, $"{hardwareDescription} at {DateTimeOffset.Now:HH:mm:ss}");
+            }
+
+            _logger.LogWarning("Hardware shortcut injection failed: {Reason}", hardwareResult.ErrorMessage);
+        }
+
+        if (TrySendShortcut(out var errorMessage, out var lastError))
+        {
+            return (true, $"Sent Ctrl+S via SendInput at {DateTimeOffset.Now:HH:mm:ss}");
+        }
+
+        var failureDescription = hardwareResult?.ErrorMessage ?? $"Failed to send shortcut: {errorMessage}; win32={lastError}";
+        if (!_isCurrentProcessElevated && elevationKnown && isTargetElevated)
+        {
+            failureDescription += "; target process is elevated—run this app as administrator";
+        }
+
+        if (hardwareResult is null || hardwareResult.ErrorMessage is null)
+        {
+            failureDescription += "; ViGEmBus/HidHide may be missing or unavailable";
+        }
+
+        return (false, failureDescription);
     }
 
     private static bool TrySendShortcut(out string? errorMessage, out int lastError)
