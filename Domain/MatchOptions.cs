@@ -12,4 +12,6 @@ public sealed class MatchOptions
     public int DefuseWindowSec { get; set; } = 40;
 
     public int ClockExpectedHz { get; set; } = 10;
+
+    public int PreflightExpectedMatchLengthSec { get; set; } = 219;
 }
