@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Reflection;
+using System.Security.Principal;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Windows.Forms;
@@ -26,6 +27,8 @@ internal static class Program
     [STAThread]
     private static async Task Main(string[] args)
     {
+        EnsureRunningAsAdministrator();
+
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
             Args = args,
@@ -195,5 +198,20 @@ internal static class Program
         response.Headers["X-Defusal-Received-At"] = DateTimeOffset.UtcNow
             .ToUnixTimeSeconds()
             .ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static void EnsureRunningAsAdministrator()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        var principal = new WindowsPrincipal(identity);
+        if (principal.IsInRole(WindowsBuiltInRole.Administrator))
+        {
+            return;
+        }
+
+        const string message = "This application must be run as administrator to control the ICE window.";
+        Console.Error.WriteLine(message);
+        MessageBox.Show(message, "Administrator required", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        Environment.Exit(1);
     }
 }
