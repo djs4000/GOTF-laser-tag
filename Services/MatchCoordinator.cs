@@ -28,12 +28,15 @@ public sealed class MatchCoordinator
     private double _lastElapsedSec;
     private DateTimeOffset? _lastClockUpdate;
     private DateTimeOffset? _lastPropUpdate;
+    private TimeSpan? _lastPropLatency;
     private TimeSpan? _lastClockLatency;
     private string _lastActionDescription = "Idle";
     private bool _focusAcquired;
     private DateTimeOffset _lastAutomationAt = DateTimeOffset.MinValue;
     private PropStatusDto? _lastPropPayload;
     private MatchSnapshotDto? _lastSnapshotPayload;
+    private double? _propTimerRemainingMs;
+    private DateTimeOffset? _propTimerSyncedAt;
 
     public event EventHandler<MatchStateSnapshot>? SnapshotUpdated;
 
@@ -66,6 +69,11 @@ public sealed class MatchCoordinator
 
         lock (_sync)
         {
+            var now = DateTimeOffset.UtcNow;
+            var sourceTimestamp = ParseSnapshotTimestamp(dto.Timestamp, now);
+            var observedLatency = now - sourceTimestamp;
+            _lastPropLatency = observedLatency < TimeSpan.Zero ? TimeSpan.Zero : observedLatency;
+
             if (_matchEnded && IsTerminalState(_lifecycleState))
             {
                 return CurrentSnapshot;
@@ -79,9 +87,15 @@ public sealed class MatchCoordinator
 
             incomingState = dto.State;
             _lastPropTimestamp = dto.Timestamp;
-            _lastPropUpdate = DateTimeOffset.UtcNow;
+            _lastPropUpdate = now;
             _lastPropPayload = dto;
             _propState = incomingState;
+
+            if (dto.TimerMs is not null)
+            {
+                _propTimerRemainingMs = Math.Max(0, dto.TimerMs.Value);
+                _propTimerSyncedAt = now;
+            }
 
             if (_lifecycleState is MatchLifecycleState.Idle or MatchLifecycleState.WaitingOnStart or MatchLifecycleState.Countdown)
             {
@@ -151,17 +165,9 @@ public sealed class MatchCoordinator
         lock (_sync)
         {
             var now = DateTimeOffset.UtcNow;
-            DateTimeOffset sourceTimestamp;
-            try
-            {
-                sourceTimestamp = new DateTimeOffset(new DateTime(dto.Timestamp, DateTimeKind.Utc));
-            }
-            catch (ArgumentOutOfRangeException)
-            {
-                _logger.LogWarning("Match snapshot timestamp {Timestamp} is out of range", dto.Timestamp);
-                sourceTimestamp = now;
-            }
-            _lastClockLatency = now - sourceTimestamp;
+            var sourceTimestamp = ParseSnapshotTimestamp(dto.Timestamp, now);
+            var observedLatency = now - sourceTimestamp;
+            _lastClockLatency = observedLatency < TimeSpan.Zero ? TimeSpan.Zero : observedLatency;
 
             if (string.IsNullOrWhiteSpace(dto.Id))
             {
@@ -222,13 +228,11 @@ public sealed class MatchCoordinator
                     _matchEnded = false;
                     _lifecycleState = MatchLifecycleState.WaitingOnStart;
                     _plantTimeSec = null;
-                    _propState = PropState.Idle;
                     break;
                 case MatchSnapshotStatus.Countdown:
                     _matchEnded = false;
                     _lifecycleState = MatchLifecycleState.Countdown;
                     _plantTimeSec = null;
-                    _propState = PropState.Idle;
                     break;
                 case MatchSnapshotStatus.Running:
                     if (!_matchEnded)
@@ -322,11 +326,14 @@ public sealed class MatchCoordinator
             _lastMatchRemainingMs = null;
             _lastClockUpdate = null;
             _lastPropUpdate = null;
+            _lastPropLatency = null;
             _lastClockLatency = null;
             _lastActionDescription = "Idle (no match data)";
             _focusAcquired = false;
             _lastPropPayload = null;
             _lastSnapshotPayload = null;
+            _propTimerRemainingMs = null;
+            _propTimerSyncedAt = null;
             PublishSnapshotLocked("Idle state");
         }
     }
@@ -376,12 +383,15 @@ public sealed class MatchCoordinator
 
     private void PublishSnapshotLocked(string source)
     {
+        var now = DateTimeOffset.UtcNow;
         var overtimeActive = _plantTimeSec is not null && _plantTimeSec.Value >= _matchOptions.AutoEndNoPlantAtSec && !_matchEnded;
         double? overtimeRemaining = null;
         if (overtimeActive)
         {
             overtimeRemaining = Math.Max(0, (_plantTimeSec!.Value + _matchOptions.DefuseWindowSec) - _lastElapsedSec);
         }
+
+        var propTimerRemainingMs = GetPropTimerRemainingMs(now);
 
         var snapshot = new MatchStateSnapshot(
             MatchId: _currentMatchId,
@@ -391,8 +401,11 @@ public sealed class MatchCoordinator
             RemainingTimeMs: _lastMatchRemainingMs,
             IsOvertime: overtimeActive,
             OvertimeRemainingSec: overtimeRemaining,
+            PropTimerRemainingMs: propTimerRemainingMs,
+            PropTimerSyncedAt: _propTimerSyncedAt,
             LastPropUpdate: _lastPropUpdate,
             LastClockUpdate: _lastClockUpdate,
+            LastPropLatency: _lastPropLatency,
             LastClockLatency: _lastClockLatency,
             LastActionDescription: _lastActionDescription,
             FocusAcquired: _focusAcquired);
@@ -415,6 +428,23 @@ public sealed class MatchCoordinator
         _logger.LogDebug("State updated via {Source}: {@Snapshot}", source, snapshot);
     }
 
+    private double? GetPropTimerRemainingMs(DateTimeOffset now)
+    {
+        if (_propTimerRemainingMs is null || _propTimerSyncedAt is null)
+        {
+            return null;
+        }
+
+        if (_propState != PropState.Armed)
+        {
+            return _propTimerRemainingMs;
+        }
+
+        var elapsedMs = (now - _propTimerSyncedAt.Value).TotalMilliseconds;
+        var remainingMs = _propTimerRemainingMs.Value - elapsedMs;
+        return Math.Max(0, remainingMs);
+    }
+
     private void ResetForNewMatch(string matchId)
     {
         _logger.LogInformation("Switching to match {MatchId}", matchId);
@@ -430,6 +460,34 @@ public sealed class MatchCoordinator
         _focusAcquired = false;
         _lastPropPayload = null;
         _lastSnapshotPayload = null;
+        _lastPropLatency = null;
+        _lastClockLatency = null;
+        _propTimerRemainingMs = null;
+        _propTimerSyncedAt = null;
+    }
+
+    private static DateTimeOffset ParseSnapshotTimestamp(long timestamp, DateTimeOffset fallback)
+    {
+        try
+        {
+            // Prefer ticks when the payload uses DateTime ticks, otherwise interpret large numbers
+            // as milliseconds and smaller values as Unix seconds.
+            if (timestamp >= 1_000_000_000_000_000)
+            {
+                return new DateTimeOffset(new DateTime(timestamp, DateTimeKind.Utc));
+            }
+
+            if (timestamp >= 10_000_000_000)
+            {
+                return DateTimeOffset.FromUnixTimeMilliseconds(timestamp);
+            }
+
+            return DateTimeOffset.FromUnixTimeSeconds(timestamp);
+        }
+        catch (Exception)
+        {
+            return fallback;
+        }
     }
 
     private async Task TriggerEndMatchAsync(string reason, CancellationToken cancellationToken)
