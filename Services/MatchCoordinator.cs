@@ -163,8 +163,34 @@ public sealed class MatchCoordinator
             }
             _lastClockLatency = now - sourceTimestamp;
 
-            if (!string.Equals(_currentMatchId, dto.Id, StringComparison.Ordinal))
+            if (string.IsNullOrWhiteSpace(dto.Id))
             {
+                _logger.LogWarning("Ignoring match snapshot with missing id while tracking {MatchId}", _currentMatchId ?? "<none>");
+                return CurrentSnapshot;
+            }
+
+            var isNewMatchId = !string.Equals(_currentMatchId, dto.Id, StringComparison.Ordinal);
+            if (_currentMatchId is null)
+            {
+                ResetForNewMatch(dto.Id);
+            }
+            else if (isNewMatchId)
+            {
+                var isTerminal = _matchEnded && IsTerminalState(_lifecycleState);
+                var isStartingState = dto.Status is MatchSnapshotStatus.WaitingOnStart or MatchSnapshotStatus.Countdown or MatchSnapshotStatus.Running;
+
+                if (!isTerminal)
+                {
+                    _logger.LogWarning("Ignoring snapshot for unexpected match {IncomingId} while tracking {CurrentMatchId}", dto.Id, _currentMatchId ?? "<none>");
+                    return CurrentSnapshot;
+                }
+
+                if (!isStartingState)
+                {
+                    _logger.LogInformation("Ignoring terminal snapshot for new match {IncomingId} while {CurrentMatchId} is ended", dto.Id, _currentMatchId);
+                    return CurrentSnapshot;
+                }
+
                 ResetForNewMatch(dto.Id);
             }
 
