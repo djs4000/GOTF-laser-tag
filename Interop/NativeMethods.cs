@@ -10,6 +10,9 @@ internal static class NativeMethods
     public const ushort VK_CONTROL = 0x11;
     public const ushort VK_S = 0x53;
     public const ushort KEYEVENTF_KEYUP = 0x0002;
+    public const uint WM_KEYDOWN = 0x0100;
+    public const uint WM_KEYUP = 0x0101;
+    public const uint MAPVK_VK_TO_VSC = 0;
     public const uint TOKEN_QUERY = 0x0008;
     public const int TokenElevation = 20;
 
@@ -39,6 +42,12 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern IntPtr GetFocus();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern uint MapVirtualKey(uint uCode, uint uMapType);
 
     [DllImport("kernel32.dll")]
     public static extern uint GetCurrentThreadId();
