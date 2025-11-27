@@ -2,9 +2,9 @@
 
 **Project**: Laser Tag Defusal Mode Orchestrator (Windows)
 
-This Windows-based C# (.NET 9) application coordinates a laser tag “defusal” mode by monitoring bomb prop and game clock data over HTTP, determining match end conditions, and signaling the laser tag software to stop via a foreground-focus + `Ctrl+F` keystroke.
+This Windows-based C# (.NET 9) application coordinates a laser tag “defusal” mode by monitoring bomb prop and game clock data over HTTP, determining match end conditions, and signaling the laser tag software to stop via a foreground-focus + `Ctrl+S` keystroke.
 
-The system uses a pragmatic ("hacky") trigger to integrate with a closed application: This software ensures the laser tag software window (`ICE`) is foregrounded and sends `Ctrl+F` to end the match.
+The system uses a pragmatic ("hacky") trigger to integrate with a closed application: This software ensures the laser tag software window (`ICE`) is foregrounded and sends `Ctrl+S` to end the match.
 
 ---
 
@@ -26,7 +26,7 @@ The system uses a pragmatic ("hacky") trigger to integrate with a closed applica
   - **During countdown states**, ignore prop events.
   - **Relay**: optionally forward combined payloads to downstream system (bearer token optional).
 - **Security**: Bind to loopback/LAN only; configurable CIDR allowlist and optional bearer token.
-- **Focus Trigger**: Targets window titled `ICE` (process `ICombat.Desktop`), restores if minimized, brings to front, then sends `Ctrl+F` via `SendInput`.
+- **Focus Trigger**: Targets window titled `ICE` (process `ICombat.Desktop`), restores if minimized, brings to front, then sends `Ctrl+S` via `SendInput`.
 
 ---
 
@@ -36,7 +36,7 @@ The system uses a pragmatic ("hacky") trigger to integrate with a closed applica
 [Prop] → POST /prop
 [LT Host] → POST /match
       ↓
-   [Application] --Focus+Ctrl+F--> [Laser Tag Software (ICE)]
+   [Application] --Focus+Ctrl+S--> [Laser Tag Software (ICE)]
       └──(optional relay)──> [Downstream System]
 ```
 
@@ -126,7 +126,7 @@ stateDiagram-v2
 
 1. Locate target window (`ICombat.Desktop`, title `ICE`).
 2. Restore (`ShowWindow`), attach input thread if needed, `SetForegroundWindow`.
-3. Send `Ctrl+F` via `SendInput`.
+3. Send `Ctrl+S` via `SendInput`.
 4. Debounce duplicate triggers and optionally confirm via log or UI cue.
 
 *(Application must run in same session; elevate if LT app runs elevated.)*
@@ -163,7 +163,7 @@ stateDiagram-v2
   "UiAutomation": {
     "ProcessName": "ICombat.Desktop",
     "WindowTitleRegex": "^ICE$",
-    "SendShortcut": "Ctrl+F",
+    "SendShortcut": "Ctrl+S",
     "FocusTimeoutMs": 1500,
     "PostShortcutDelayMs": 150,
     "DebounceWindowMs": 2000 // tunable defaults; confirm with backend

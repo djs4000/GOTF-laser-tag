@@ -8,7 +8,7 @@ internal static class NativeMethods
     public const int SW_RESTORE = 9;
     public const uint INPUT_KEYBOARD = 1;
     public const ushort VK_CONTROL = 0x11;
-    public const ushort VK_F = 0x46;
+    public const ushort VK_S = 0x53;
     public const ushort KEYEVENTF_KEYUP = 0x0002;
 
     [DllImport("user32.dll", SetLastError = true)]
