@@ -116,7 +116,13 @@ public sealed class FocusService : IFocusService
 
             if (sendShortcut)
             {
-                SendShortcut();
+                if (!TrySendShortcut(out var errorMessage, out var lastError))
+                {
+                    var description = $"Failed to send shortcut: {errorMessage}; win32={lastError}";
+                    _logger.LogWarning("{Description} ({Reason})", description, reason);
+                    return new FocusActionResult(false, description);
+                }
+
                 await Task.Delay(_options.PostShortcutDelayMs, cancellationToken).ConfigureAwait(true);
 
                 var description = $"Sent Ctrl+S at {DateTimeOffset.Now:HH:mm:ss}";
@@ -216,7 +222,7 @@ public sealed class FocusService : IFocusService
             : null;
     }
 
-    private static void SendShortcut()
+    private static bool TrySendShortcut(out string? errorMessage, out int lastError)
     {
         var inputs = new[]
         {
@@ -229,8 +235,14 @@ public sealed class FocusService : IFocusService
         var sent = NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeMethods.INPUT>());
         if (sent != inputs.Length)
         {
-            throw new InvalidOperationException("SendInput returned fewer inputs than expected");
+            errorMessage = $"SendInput sent {sent}/{inputs.Length} inputs";
+            lastError = Marshal.GetLastPInvokeError();
+            return false;
         }
+
+        errorMessage = null;
+        lastError = 0;
+        return true;
     }
 
     private static NativeMethods.INPUT CreateKeyDown(ushort key)
