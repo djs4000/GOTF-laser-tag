@@ -240,6 +240,28 @@ public class MatchCoordinatorTests
     }
 
     [Fact]
+    public async Task PropTimerCountsDownBetweenUpdates()
+    {
+        var (coordinator, _) = CreateCoordinator();
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, 1), CancellationToken.None);
+
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 2, TimerMs = 40_000 }, CancellationToken.None);
+        var initial = coordinator.Snapshot().PropTimerRemainingMs;
+
+        Assert.NotNull(initial);
+        Assert.InRange(initial!.Value, 39_000, 40_000);
+
+        await Task.Delay(120);
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 199_000, 3), CancellationToken.None);
+        var updated = coordinator.Snapshot().PropTimerRemainingMs;
+
+        Assert.NotNull(updated);
+        Assert.True(updated!.Value < initial.Value);
+        Assert.InRange(updated.Value, initial.Value - 400, initial.Value);
+    }
+
+    [Fact]
     public async Task AllowsNewMatchAfterTerminalState()
     {
         var (coordinator, _) = CreateCoordinator();

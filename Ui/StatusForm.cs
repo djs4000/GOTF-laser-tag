@@ -439,6 +439,18 @@ public sealed class StatusForm : Form
         return FormatTimeMs(snapshot.RemainingTimeMs);
     }
 
+    private static double? CalculatePropTimerRemainingSeconds(MatchStateSnapshot snapshot)
+    {
+        if (snapshot.PropTimerRemainingMs is null || snapshot.PropTimerSyncedAt is null)
+        {
+            return null;
+        }
+
+        var elapsedMs = (DateTimeOffset.UtcNow - snapshot.PropTimerSyncedAt.Value).TotalMilliseconds;
+        var remainingMs = snapshot.PropTimerRemainingMs.Value - elapsedMs;
+        return Math.Max(0, remainingMs) / 1000.0;
+    }
+
     private void RenderSnapshot()
     {
         if (!IsHandleCreated)
@@ -463,9 +475,19 @@ public sealed class StatusForm : Form
             ? $"Latency {snapshot.LastPropLatency.Value.TotalMilliseconds:F0} ms"
             : "Latency —";
 
-        _defuseTimerLabel.Text = snapshot.IsOvertime && snapshot.OvertimeRemainingSec is not null
-            ? FormatSeconds(snapshot.OvertimeRemainingSec.Value)
-            : "—";
+        var propTimerRemainingSec = CalculatePropTimerRemainingSeconds(snapshot);
+        if (propTimerRemainingSec is not null)
+        {
+            _defuseTimerLabel.Text = $"{propTimerRemainingSec.Value:F1}s";
+        }
+        else if (snapshot.IsOvertime && snapshot.OvertimeRemainingSec is not null)
+        {
+            _defuseTimerLabel.Text = $"{Math.Max(0, snapshot.OvertimeRemainingSec.Value):F1}s";
+        }
+        else
+        {
+            _defuseTimerLabel.Text = "—";
+        }
 
         _matchTimerLabel.Text = FormatMatchTimer(snapshot);
 

@@ -35,6 +35,8 @@ public sealed class MatchCoordinator
     private DateTimeOffset _lastAutomationAt = DateTimeOffset.MinValue;
     private PropStatusDto? _lastPropPayload;
     private MatchSnapshotDto? _lastSnapshotPayload;
+    private double? _propTimerRemainingMs;
+    private DateTimeOffset? _propTimerSyncedAt;
 
     public event EventHandler<MatchStateSnapshot>? SnapshotUpdated;
 
@@ -88,6 +90,12 @@ public sealed class MatchCoordinator
             _lastPropUpdate = now;
             _lastPropPayload = dto;
             _propState = incomingState;
+
+            if (dto.TimerMs is not null)
+            {
+                _propTimerRemainingMs = Math.Max(0, dto.TimerMs.Value);
+                _propTimerSyncedAt = now;
+            }
 
             if (_lifecycleState is MatchLifecycleState.Idle or MatchLifecycleState.WaitingOnStart or MatchLifecycleState.Countdown)
             {
@@ -324,6 +332,8 @@ public sealed class MatchCoordinator
             _focusAcquired = false;
             _lastPropPayload = null;
             _lastSnapshotPayload = null;
+            _propTimerRemainingMs = null;
+            _propTimerSyncedAt = null;
             PublishSnapshotLocked("Idle state");
         }
     }
@@ -373,12 +383,15 @@ public sealed class MatchCoordinator
 
     private void PublishSnapshotLocked(string source)
     {
+        var now = DateTimeOffset.UtcNow;
         var overtimeActive = _plantTimeSec is not null && _plantTimeSec.Value >= _matchOptions.AutoEndNoPlantAtSec && !_matchEnded;
         double? overtimeRemaining = null;
         if (overtimeActive)
         {
             overtimeRemaining = Math.Max(0, (_plantTimeSec!.Value + _matchOptions.DefuseWindowSec) - _lastElapsedSec);
         }
+
+        var propTimerRemainingMs = GetPropTimerRemainingMs(now);
 
         var snapshot = new MatchStateSnapshot(
             MatchId: _currentMatchId,
@@ -388,6 +401,8 @@ public sealed class MatchCoordinator
             RemainingTimeMs: _lastMatchRemainingMs,
             IsOvertime: overtimeActive,
             OvertimeRemainingSec: overtimeRemaining,
+            PropTimerRemainingMs: propTimerRemainingMs,
+            PropTimerSyncedAt: _propTimerSyncedAt,
             LastPropUpdate: _lastPropUpdate,
             LastClockUpdate: _lastClockUpdate,
             LastPropLatency: _lastPropLatency,
@@ -413,6 +428,18 @@ public sealed class MatchCoordinator
         _logger.LogDebug("State updated via {Source}: {@Snapshot}", source, snapshot);
     }
 
+    private double? GetPropTimerRemainingMs(DateTimeOffset now)
+    {
+        if (_propTimerRemainingMs is null || _propTimerSyncedAt is null)
+        {
+            return null;
+        }
+
+        var elapsedMs = (now - _propTimerSyncedAt.Value).TotalMilliseconds;
+        var remainingMs = _propTimerRemainingMs.Value - elapsedMs;
+        return Math.Max(0, remainingMs);
+    }
+
     private void ResetForNewMatch(string matchId)
     {
         _logger.LogInformation("Switching to match {MatchId}", matchId);
@@ -430,6 +457,8 @@ public sealed class MatchCoordinator
         _lastSnapshotPayload = null;
         _lastPropLatency = null;
         _lastClockLatency = null;
+        _propTimerRemainingMs = null;
+        _propTimerSyncedAt = null;
     }
 
     private static DateTimeOffset ParseSnapshotTimestamp(long timestamp, DateTimeOffset fallback)
