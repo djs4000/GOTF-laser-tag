@@ -103,7 +103,6 @@ public sealed class MatchCoordinator
                 shouldTriggerEnd = true;
                 triggerReason = incomingState == PropState.Defused ? "Prop defused" : "Prop detonated";
                 _matchEnded = true;
-                _lifecycleState = MatchLifecycleState.WaitingOnFinalData;
             }
 
             PublishSnapshotLocked("Prop update");
@@ -206,7 +205,10 @@ public sealed class MatchCoordinator
                     _propState = PropState.Idle;
                     break;
                 case MatchSnapshotStatus.Running:
-                    _matchEnded = false;
+                    if (!_matchEnded)
+                    {
+                        _matchEnded = false;
+                    }
                     if (_propState == PropState.Idle)
                     {
                         _propState = PropState.Active;
@@ -323,7 +325,6 @@ public sealed class MatchCoordinator
             shouldTriggerEnd = true;
             triggerReason = _propState == PropState.Defused ? "Prop defused" : "Prop detonated";
             _matchEnded = true;
-            _lifecycleState = MatchLifecycleState.WaitingOnFinalData;
             return;
         }
 
@@ -332,7 +333,6 @@ public sealed class MatchCoordinator
             shouldTriggerEnd = true;
             triggerReason = $"No plant by {_matchOptions.AutoEndNoPlantAtSec}s";
             _matchEnded = true;
-            _lifecycleState = MatchLifecycleState.WaitingOnFinalData;
             return;
         }
 
@@ -344,7 +344,6 @@ public sealed class MatchCoordinator
                 shouldTriggerEnd = true;
                 triggerReason = "Bomb overtime expired";
                 _matchEnded = true;
-                _lifecycleState = MatchLifecycleState.WaitingOnFinalData;
             }
         }
     }
