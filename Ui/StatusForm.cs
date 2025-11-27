@@ -33,8 +33,9 @@ public sealed class StatusForm : Form
     private readonly Label _overtimeLabel = new();
     private readonly Label _propLabel = new();
     private readonly Label _plantLabel = new();
-    private readonly Label _latencyLabel = new();
-    private readonly Label _countdownLabel = new();
+    private readonly Label _matchLatencyLabel = new();
+    private readonly Label _propLatencyLabel = new();
+    private readonly Label _defuseTimerLabel = new();
     private readonly Label _matchTimerLabel = new();
     private readonly Label _focusLabel = new();
     private readonly Label _actionLabel = new();
@@ -75,7 +76,7 @@ public sealed class StatusForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 11,
+            RowCount = 12,
             Padding = new Padding(10),
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink
@@ -90,8 +91,9 @@ public sealed class StatusForm : Form
         AddRow(layout, "State", CreateStatePanel());
         AddRow(layout, "Prop", _propLabel);
         AddRow(layout, "Bomb", _plantLabel);
-        AddRow(layout, "Clock", _latencyLabel);
-        AddRow(layout, "Countdown", _countdownLabel);
+        AddRow(layout, "Match clock", _matchLatencyLabel);
+        AddRow(layout, "Prop clock", _propLatencyLabel);
+        AddRow(layout, "Defuse timer", _defuseTimerLabel);
         AddRow(layout, "Match timer", _matchTimerLabel);
         AddRow(layout, "Focus", CreateFocusPanel());
         AddRow(layout, "Last", _actionLabel);
@@ -415,6 +417,45 @@ public sealed class StatusForm : Form
         return $"{minutes:0}:{seconds:00}";
     }
 
+    private static string FormatSeconds(double seconds)
+    {
+        var clamped = Math.Max(0, seconds);
+        var timeSpan = TimeSpan.FromSeconds(clamped);
+        return $"{(int)timeSpan.TotalMinutes:0}:{timeSpan.Seconds:00}";
+    }
+
+    private static string FormatMatchTimer(MatchStateSnapshot snapshot)
+    {
+        if (snapshot.LifecycleState == MatchLifecycleState.Idle)
+        {
+            return "—";
+        }
+
+        if (snapshot.IsOvertime && snapshot.OvertimeRemainingSec is not null)
+        {
+            return $"OT {FormatSeconds(snapshot.OvertimeRemainingSec.Value)}";
+        }
+
+        return FormatTimeMs(snapshot.RemainingTimeMs);
+    }
+
+    private static double? CalculatePropTimerRemainingSeconds(MatchStateSnapshot snapshot)
+    {
+        if (snapshot.PropTimerRemainingMs is null)
+        {
+            return null;
+        }
+
+        if (snapshot.PropState != PropState.Armed || snapshot.PropTimerSyncedAt is null)
+        {
+            return snapshot.PropTimerRemainingMs.Value / 1000.0;
+        }
+
+        var elapsedMs = (DateTimeOffset.UtcNow - snapshot.PropTimerSyncedAt.Value).TotalMilliseconds;
+        var remainingMs = snapshot.PropTimerRemainingMs.Value - elapsedMs;
+        return Math.Max(0, remainingMs) / 1000.0;
+    }
+
     private void RenderSnapshot()
     {
         if (!IsHandleCreated)
@@ -431,17 +472,29 @@ public sealed class StatusForm : Form
             ? $"{snapshot.PlantTimeSec.Value:F1}s"
             : "—";
 
-        _latencyLabel.Text = snapshot.LastClockLatency.HasValue
+        _matchLatencyLabel.Text = snapshot.LastClockLatency.HasValue
             ? $"Latency {snapshot.LastClockLatency.Value.TotalMilliseconds:F0} ms"
             : "Latency —";
 
-        _countdownLabel.Text = snapshot.LifecycleState == MatchLifecycleState.Countdown
-            ? FormatTimeMs(snapshot.RemainingTimeMs)
-            : "—";
+        _propLatencyLabel.Text = snapshot.LastPropLatency.HasValue
+            ? $"Latency {snapshot.LastPropLatency.Value.TotalMilliseconds:F0} ms"
+            : "Latency —";
 
-        _matchTimerLabel.Text = snapshot.LifecycleState != MatchLifecycleState.Idle
-            ? FormatTimeMs(snapshot.RemainingTimeMs)
-            : "—";
+        var propTimerRemainingSec = CalculatePropTimerRemainingSeconds(snapshot);
+        if (propTimerRemainingSec is not null)
+        {
+            _defuseTimerLabel.Text = $"{propTimerRemainingSec.Value:F1}s";
+        }
+        else if (snapshot.IsOvertime && snapshot.OvertimeRemainingSec is not null)
+        {
+            _defuseTimerLabel.Text = $"{Math.Max(0, snapshot.OvertimeRemainingSec.Value):F1}s";
+        }
+        else
+        {
+            _defuseTimerLabel.Text = "—";
+        }
+
+        _matchTimerLabel.Text = FormatMatchTimer(snapshot);
 
         UpdateFocusLabel();
 
