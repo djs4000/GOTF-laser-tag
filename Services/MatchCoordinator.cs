@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using LaserTag.Defusal.Domain;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -12,6 +14,7 @@ public sealed class MatchCoordinator
 {
     private readonly ILogger<MatchCoordinator> _logger;
     private readonly MatchOptions _matchOptions;
+    private readonly HttpOptions _httpOptions;
     private readonly RelayService _relayService;
     private readonly IFocusService _focusService;
     private readonly UiAutomationOptions _uiAutomationOptions;
@@ -43,6 +46,7 @@ public sealed class MatchCoordinator
 
     public MatchCoordinator(
         IOptions<MatchOptions> matchOptions,
+        IOptions<HttpOptions> httpOptions,
         RelayService relayService,
         IFocusService focusService,
         IOptions<UiAutomationOptions> uiAutomationOptions,
@@ -53,6 +57,7 @@ public sealed class MatchCoordinator
         _uiAutomationOptions = uiAutomationOptions.Value;
         _logger = logger;
         _matchOptions = matchOptions.Value;
+        _httpOptions = httpOptions.Value;
     }
 
     /// <summary>
@@ -119,7 +124,7 @@ public sealed class MatchCoordinator
     /// <summary>
     /// Builds the response payload expected by the prop, reflecting the latest known match state.
     /// </summary>
-    public PropUpdateResponseDto BuildPropResponse(long requestTimestamp)
+    public PropUpdateResponseDto BuildPropResponse(long requestTimestamp, bool includeDiagnostics = false)
     {
         lock (_sync)
         {
@@ -131,12 +136,74 @@ public sealed class MatchCoordinator
                     ? _lastPropTimestamp
                     : requestTimestamp;
 
+            PropDiagnosticsDto? diagnostics = null;
+            if (includeDiagnostics)
+            {
+                var errorCauses = new List<string>();
+
+                if (_currentMatchId is null)
+                {
+                    errorCauses.Add("No match id received yet from /match; waiting before arming prop logic.");
+                }
+
+                if (_lifecycleState is MatchLifecycleState.Idle or MatchLifecycleState.WaitingOnStart or MatchLifecycleState.Countdown)
+                {
+                    errorCauses.Add($"Match lifecycle is {_lifecycleState}; prop updates are ignored until Running.");
+                }
+
+                if (_matchEnded && IsTerminalState(_lifecycleState))
+                {
+                    errorCauses.Add($"Match already ended ({_lifecycleState}); acknowledging prop updates without new actions.");
+                }
+
+                if (_lastClockUpdate is null)
+                {
+                    errorCauses.Add("No match clock snapshots received yet; ensure /match requests are arriving.");
+                }
+                else
+                {
+                    var clockAgeMs = (int)Math.Round((DateTimeOffset.UtcNow - _lastClockUpdate.Value).TotalMilliseconds);
+                    if (clockAgeMs > _httpOptions.RequestTimeoutSeconds * 1000)
+                    {
+                        errorCauses.Add($"Last match clock is stale by {clockAgeMs}ms (>{_httpOptions.RequestTimeoutSeconds}s). Check connectivity from LT host.");
+                    }
+                }
+
+                if (_lastPropUpdate is null)
+                {
+                    errorCauses.Add("No prop payload has been applied yet; confirm prop is POSTing /prop updates.");
+                }
+                else
+                {
+                    var propAgeMs = (int)Math.Round((DateTimeOffset.UtcNow - _lastPropUpdate.Value).TotalMilliseconds);
+                    if (propAgeMs > _httpOptions.RequestTimeoutSeconds * 1000)
+                    {
+                        errorCauses.Add($"Last prop payload is stale by {propAgeMs}ms (>{_httpOptions.RequestTimeoutSeconds}s). Verify prop connectivity.");
+                    }
+                }
+
+                diagnostics = new PropDiagnosticsDto
+                {
+                    MatchId = _currentMatchId,
+                    LifecycleState = _lifecycleState.ToString(),
+                    PropState = _propState.ToString(),
+                    MatchEnded = _matchEnded,
+                    FocusAcquired = _focusAcquired,
+                    LastAction = _lastActionDescription,
+                    LastKnownRemainingMs = _lastMatchRemainingMs,
+                    LastClockLatencyMs = _lastClockLatency is null ? null : (int?)Math.Round(_lastClockLatency.Value.TotalMilliseconds),
+                    LastPropAgeMs = _lastPropUpdate is null ? null : (int?)Math.Round((DateTimeOffset.UtcNow - _lastPropUpdate.Value).TotalMilliseconds),
+                    ErrorCauses = errorCauses.Count > 0 ? errorCauses : null
+                };
+            }
+
             return new PropUpdateResponseDto
             {
                 Status = "ok",
                 MatchStatus = matchStatus,
                 RemainingTimeMs = remaining,
-                Timestamp = timestamp
+                Timestamp = timestamp,
+                Diagnostics = diagnostics
             };
         }
     }

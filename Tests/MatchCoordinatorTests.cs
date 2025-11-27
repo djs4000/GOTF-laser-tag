@@ -25,6 +25,7 @@ public class MatchCoordinatorTests
         var relay = new RelayService(Options.Create(new RelayOptions { Enabled = false }), NullLogger<RelayService>.Instance);
         var coordinator = new MatchCoordinator(
             Options.Create(matchOptions),
+            Options.Create(new HttpOptions()),
             relay,
             focus,
             Options.Create(new UiAutomationOptions { DebounceWindowMs = 10 }),
@@ -129,11 +130,14 @@ public class MatchCoordinatorTests
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, secondsFromEpoch), CancellationToken.None);
         await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = matchTimestamp + 1 }, CancellationToken.None);
 
-        var response = coordinator.BuildPropResponse(matchTimestamp + 2);
+        var response = coordinator.BuildPropResponse(matchTimestamp + 2, includeDiagnostics: true);
 
-        Assert.Equal(MatchLifecycleState.Running.ToString(), response.Status);
+        Assert.Equal("ok", response.Status);
+        Assert.Equal(MatchLifecycleState.Running.ToString(), response.MatchStatus);
         Assert.Equal(200_000, response.RemainingTimeMs);
         Assert.Equal(matchTimestamp, response.Timestamp);
+        Assert.NotNull(response.Diagnostics);
+        Assert.Equal("match", response.Diagnostics!.MatchId);
     }
 
     [Fact]

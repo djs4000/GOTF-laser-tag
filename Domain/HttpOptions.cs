@@ -12,4 +12,9 @@ public sealed class HttpOptions
     public string[] AllowedCidrs { get; set; } = ["192.168.1.0/24","192.168.0.0/24"];
 
     public int RequestTimeoutSeconds { get; set; } = 5;
+
+    /// <summary>
+    /// Optional token that, when supplied via header or query string, enables verbose diagnostics in prop responses.
+    /// </summary>
+    public string? DiagnosticsToken { get; set; }
 }

@@ -83,11 +83,12 @@ internal static class Program
 
         app.UseMiddleware<SecurityMiddleware>();
 
-        app.MapPost("/prop", async (PropStatusDto dto, MatchCoordinator coordinator, HttpContext httpContext, CancellationToken cancellationToken) =>
+        app.MapPost("/prop", async (PropStatusDto dto, IOptions<HttpOptions> httpOptions, MatchCoordinator coordinator, HttpContext httpContext, CancellationToken cancellationToken) =>
         {
             await coordinator.UpdatePropAsync(dto, cancellationToken).ConfigureAwait(false);
             StampAckHeaders(httpContext.Response, "prop-status");
-            var response = coordinator.BuildPropResponse(dto.Timestamp);
+            var includeDiagnostics = ShouldIncludeDiagnostics(httpContext.Request, httpOptions.Value.DiagnosticsToken);
+            var response = coordinator.BuildPropResponse(dto.Timestamp, includeDiagnostics);
             return Results.Ok(response);
         });
 
@@ -195,6 +196,26 @@ internal static class Program
         response.Headers["X-Defusal-Received-At"] = DateTimeOffset.UtcNow
             .ToUnixTimeSeconds()
             .ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static bool ShouldIncludeDiagnostics(HttpRequest request, string? diagnosticsToken)
+    {
+        if (string.IsNullOrWhiteSpace(diagnosticsToken))
+        {
+            return false;
+        }
+
+        if (request.Headers.TryGetValue("X-Debug-Token", out var headerValues) && headerValues.Any(v => string.Equals(v, diagnosticsToken, StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        if (request.Query.TryGetValue("debug_token", out var queryValues) && queryValues.Any(v => string.Equals(v, diagnosticsToken, StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        return false;
     }
 
 }

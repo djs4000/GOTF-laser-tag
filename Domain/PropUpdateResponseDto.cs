@@ -18,4 +18,8 @@ public sealed class PropUpdateResponseDto
 
     [JsonPropertyName("timestamp")]
     public required long Timestamp { get; init; }
+
+    [JsonPropertyName("diagnostics")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public PropDiagnosticsDto? Diagnostics { get; init; }
 }
