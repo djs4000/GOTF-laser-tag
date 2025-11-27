@@ -125,7 +125,7 @@ public sealed class FocusService : IFocusService
 
             if (sendShortcut)
             {
-                if (!TrySendShortcut(out var errorMessage, out var lastError))
+                if (!TrySendShortcut(handle, out var errorMessage, out var lastError))
                 {
                     var failureDescription = $"Failed to send shortcut: {errorMessage}; win32={lastError}";
                     if (!_isCurrentProcessElevated && elevationKnown && isTargetElevated)
@@ -235,7 +235,17 @@ public sealed class FocusService : IFocusService
             : null;
     }
 
-    private static bool TrySendShortcut(out string? errorMessage, out int lastError)
+    private static bool TrySendShortcut(IntPtr handle, out string? errorMessage, out int lastError)
+    {
+        if (TrySendInputShortcut(out errorMessage, out lastError))
+        {
+            return true;
+        }
+
+        return TrySendPostMessageShortcut(handle, out errorMessage, out lastError);
+    }
+
+    private static bool TrySendInputShortcut(out string? errorMessage, out int lastError)
     {
         var inputs = new[]
         {
@@ -256,6 +266,34 @@ public sealed class FocusService : IFocusService
         errorMessage = null;
         lastError = 0;
         return true;
+    }
+
+    private static bool TrySendPostMessageShortcut(IntPtr handle, out string? errorMessage, out int lastError)
+    {
+        // PostMessage avoids global input injection and can succeed when SendInput is blocked
+        // (e.g., by foreground restrictions or elevated target windows). It still requires
+        // the target thread to process keyboard messages.
+        if (!NativeMethods.PostMessage(handle, NativeMethods.WM_KEYDOWN, new IntPtr(NativeMethods.VK_CONTROL), CreateKeyLParam(NativeMethods.VK_CONTROL, isKeyUp: false)) ||
+            !NativeMethods.PostMessage(handle, NativeMethods.WM_KEYDOWN, new IntPtr(NativeMethods.VK_S), CreateKeyLParam(NativeMethods.VK_S, isKeyUp: false)) ||
+            !NativeMethods.PostMessage(handle, NativeMethods.WM_KEYUP, new IntPtr(NativeMethods.VK_S), CreateKeyLParam(NativeMethods.VK_S, isKeyUp: true)) ||
+            !NativeMethods.PostMessage(handle, NativeMethods.WM_KEYUP, new IntPtr(NativeMethods.VK_CONTROL), CreateKeyLParam(NativeMethods.VK_CONTROL, isKeyUp: true)))
+        {
+            errorMessage = "PostMessage sequence failed";
+            lastError = Marshal.GetLastPInvokeError();
+            return false;
+        }
+
+        errorMessage = "SendInput blocked; PostMessage fallback succeeded";
+        lastError = 0;
+        return true;
+    }
+
+    private static IntPtr CreateKeyLParam(ushort virtualKey, bool isKeyUp)
+    {
+        var scanCode = NativeMethods.MapVirtualKey(virtualKey, NativeMethods.MAPVK_VK_TO_VSC);
+        uint flags = isKeyUp ? 0xC0000000u : 0x00000000u; // transition + previous state for key up
+        var value = 1u | (scanCode << 16) | flags;
+        return new IntPtr(unchecked((int)value));
     }
 
     private static bool TryGetElevation(Process process, out bool isElevated)
