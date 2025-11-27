@@ -123,7 +123,7 @@ public sealed class MatchCoordinator
     {
         lock (_sync)
         {
-            var status = CurrentSnapshot.LifecycleState.ToString();
+            var matchStatus = CurrentSnapshot.LifecycleState.ToString();
             var remaining = CurrentSnapshot.RemainingTimeMs ?? _lastMatchRemainingMs ?? 0;
             var timestamp = _lastSnapshotTimestamp != 0
                 ? _lastSnapshotTimestamp
@@ -133,7 +133,8 @@ public sealed class MatchCoordinator
 
             return new PropUpdateResponseDto
             {
-                Status = status,
+                Status = "ok",
+                MatchStatus = matchStatus,
                 RemainingTimeMs = remaining,
                 Timestamp = timestamp
             };

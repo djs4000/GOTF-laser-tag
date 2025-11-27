@@ -10,6 +10,9 @@ public sealed class PropUpdateResponseDto
     [JsonPropertyName("status")]
     public required string Status { get; init; }
 
+    [JsonPropertyName("match_status")]
+    public required string MatchStatus { get; init; }
+
     [JsonPropertyName("remaining_time_ms")]
     public required int RemainingTimeMs { get; init; }
 
