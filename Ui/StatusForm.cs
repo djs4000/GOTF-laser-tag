@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
 using System.Linq;
@@ -37,8 +38,13 @@ public sealed class StatusForm : Form
     private readonly Label _propLatencyLabel = new();
     private readonly Label _defuseTimerLabel = new();
     private readonly Label _matchTimerLabel = new();
+    private readonly Label _playerCountsLabel = new();
     private readonly Label _focusLabel = new();
     private readonly Label _actionLabel = new();
+    private readonly ComboBox _attackingTeamComboBox = new();
+    private readonly Label _teamNamesCheckLabel = new();
+    private readonly Label _playerNamesCheckLabel = new();
+    private readonly Label _matchLengthCheckLabel = new();
     private readonly Button _focusButton = new();
     private const double CountdownDebugDurationSec = 5;
     private const double RunningDebugDurationSec = 219;
@@ -100,6 +106,8 @@ public sealed class StatusForm : Form
         var matchRow = 0;
         matchRow = AddRow(matchSection.panel, matchRow, "Match ID", _matchLabel);
         matchRow = AddRow(matchSection.panel, matchRow, "State", CreateStatePanel());
+        _playerCountsLabel.MaximumSize = new Size(220, 0);
+        matchRow = AddRow(matchSection.panel, matchRow, "Players", _playerCountsLabel);
         matchRow = AddRow(matchSection.panel, matchRow, "Timer", _matchTimerLabel);
         matchRow = AddRow(matchSection.panel, matchRow, "Latency", _matchLatencyLabel);
         layout.Controls.Add(matchSection.container, 0, 1);
@@ -113,12 +121,10 @@ public sealed class StatusForm : Form
 
         var configSection = CreateSectionPanel("Game configuration");
         var configRow = 0;
-        var configPlaceholder = new Label
-        {
-            AutoSize = true,
-            Text = "Coming soon"
-        };
-        configRow = AddRow(configSection.panel, configRow, "Status", configPlaceholder);
+        ConfigureAttackingTeamComboBox();
+        var preflightPanel = CreatePreflightPanel();
+        configRow = AddRow(configSection.panel, configRow, "Attacking team", _attackingTeamComboBox);
+        configRow = AddRow(configSection.panel, configRow, "Pre-flight", preflightPanel);
         layout.Controls.Add(configSection.container, 2, 1);
 
         Controls.Add(layout);
@@ -173,6 +179,17 @@ public sealed class StatusForm : Form
         return panel;
     }
 
+    private void ConfigureAttackingTeamComboBox()
+    {
+        _attackingTeamComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        _attackingTeamComboBox.Items.Clear();
+        _attackingTeamComboBox.Items.AddRange(new object[] { "Team 1", "Team 2" });
+        if (_attackingTeamComboBox.Items.Count > 0)
+        {
+            _attackingTeamComboBox.SelectedIndex = 0;
+        }
+    }
+
     private Control CreateFocusPanel()
     {
         var panel = new TableLayoutPanel
@@ -201,6 +218,32 @@ public sealed class StatusForm : Form
 
         panel.Controls.Add(_focusLabel, 0, 0);
         panel.Controls.Add(_focusButton, 1, 0);
+        return panel;
+    }
+
+    private Control CreatePreflightPanel()
+    {
+        var panel = new TableLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1,
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0),
+            Padding = new Padding(0)
+        };
+
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+        ConfigureChecklistLabel(_teamNamesCheckLabel);
+        ConfigureChecklistLabel(_playerNamesCheckLabel);
+        ConfigureChecklistLabel(_matchLengthCheckLabel);
+
+        var row = 0;
+        row = AddChecklistRow(panel, row, _teamNamesCheckLabel);
+        row = AddChecklistRow(panel, row, _playerNamesCheckLabel);
+        AddChecklistRow(panel, row, _matchLengthCheckLabel);
+
         return panel;
     }
 
@@ -288,6 +331,21 @@ public sealed class StatusForm : Form
         control.Margin = new Padding(0, 3, 0, 3);
         layout.Controls.Add(header, 0, rowIndex);
         layout.Controls.Add(control, 1, rowIndex);
+        return rowIndex + 1;
+    }
+
+    private static void ConfigureChecklistLabel(Label label)
+    {
+        label.AutoSize = true;
+        label.MaximumSize = new Size(240, 0);
+        label.Margin = new Padding(0, 3, 0, 3);
+    }
+
+    private static int AddChecklistRow(TableLayoutPanel panel, int rowIndex, Control control)
+    {
+        panel.RowCount = Math.Max(panel.RowCount, rowIndex + 1);
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        panel.Controls.Add(control, 0, rowIndex);
         return rowIndex + 1;
     }
 
@@ -496,6 +554,20 @@ public sealed class StatusForm : Form
         return FormatTimeMs(snapshot.RemainingTimeMs);
     }
 
+    private static string FormatPlayerCounts(IReadOnlyList<TeamPlayerCountSnapshot> counts)
+    {
+        if (counts.Count == 0)
+        {
+            return "—";
+        }
+
+        var lines = counts
+            .Select(count => $"{count.Team}: {count.Alive}/{count.Total} alive")
+            .ToArray();
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
     private static double? CalculatePropTimerRemainingSeconds(MatchStateSnapshot snapshot)
     {
         if (snapshot.PropTimerRemainingMs is null)
@@ -511,6 +583,115 @@ public sealed class StatusForm : Form
         var elapsedMs = (DateTimeOffset.UtcNow - snapshot.PropTimerSyncedAt.Value).TotalMilliseconds;
         var remainingMs = snapshot.PropTimerRemainingMs.Value - elapsedMs;
         return Math.Max(0, remainingMs) / 1000.0;
+    }
+
+    private static bool? AreTeamNamesValid(IReadOnlyList<MatchPlayerSnapshotDto> players)
+    {
+        if (players.Count == 0)
+        {
+            return null;
+        }
+
+        var expectedTeams = new HashSet<string>(new[] { "Team 1", "Team 2" }, StringComparer.OrdinalIgnoreCase);
+        var observedTeams = players
+            .Select(player => player.Team)
+            .Where(team => !string.IsNullOrWhiteSpace(team))
+            .Select(team => team.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (observedTeams.Count != expectedTeams.Count)
+        {
+            return false;
+        }
+
+        return expectedTeams.SetEquals(observedTeams);
+    }
+
+    private static bool? ArePlayerNamesValid(IReadOnlyList<MatchPlayerSnapshotDto> players)
+    {
+        if (players.Count == 0)
+        {
+            return null;
+        }
+
+        foreach (var player in players)
+        {
+            if (string.IsNullOrWhiteSpace(player.Id) || string.IsNullOrWhiteSpace(player.Team))
+            {
+                return false;
+            }
+
+            if (!IsPlayerNameAlignedWithTeam(player.Id, player.Team))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsPlayerNameAlignedWithTeam(string playerName, string teamName)
+    {
+        var trimmedTeam = teamName.Trim();
+        if (!playerName.StartsWith(trimmedTeam, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var suffix = playerName[trimmedTeam.Length..].Trim();
+        return suffix.Length == 1 && suffix[0] is >= 'A' and <= 'Z';
+    }
+
+    private void UpdatePreflightChecks(MatchStateSnapshot snapshot)
+    {
+        var teamNamesValid = AreTeamNamesValid(snapshot.Players);
+        SetChecklistLabel(_teamNamesCheckLabel, teamNamesValid, "Team names set to Team 1 and Team 2", "Team names should be Team 1 and Team 2");
+
+        var playerNamesValid = ArePlayerNamesValid(snapshot.Players);
+        SetChecklistLabel(_playerNamesCheckLabel, playerNamesValid, "Players named Team X + letter", "Players should be named Team 1 A, Team 1 B, Team 2 A…");
+
+        UpdateMatchLengthChecklist();
+    }
+
+    private void UpdateMatchLengthChecklist()
+    {
+        var expected = _matchOptions.PreflightExpectedMatchLengthSec;
+        var configured = _matchOptions.LtDisplayedDurationSec;
+        var expectedText = FormatSeconds(expected);
+        var configuredText = FormatSeconds(configured);
+
+        if (configured == expected)
+        {
+            _matchLengthCheckLabel.Text = $"✓ Match length {configuredText}";
+            _matchLengthCheckLabel.ForeColor = Color.DarkGreen;
+        }
+        else
+        {
+            _matchLengthCheckLabel.Text = $"⚠ Expected {expectedText}, configured {configuredText}";
+            _matchLengthCheckLabel.ForeColor = Color.DarkRed;
+        }
+    }
+
+    private static void SetChecklistLabel(Label label, bool? passed, string successText, string failureText)
+    {
+        if (passed is null)
+        {
+            label.Text = "… Waiting for roster";
+            label.ForeColor = Color.DimGray;
+            return;
+        }
+
+        if (passed.Value)
+        {
+            label.Text = "✓ " + successText;
+            label.ForeColor = Color.DarkGreen;
+        }
+        else
+        {
+            label.Text = "⚠ " + failureText;
+            label.ForeColor = Color.DarkRed;
+        }
     }
 
     private void RenderSnapshot()
@@ -546,6 +727,8 @@ public sealed class StatusForm : Form
             ? $"Latency {snapshot.LastClockLatency.Value.TotalMilliseconds:F0} ms"
             : "Latency —";
 
+        _playerCountsLabel.Text = FormatPlayerCounts(snapshot.TeamPlayerCounts);
+
         _propLatencyLabel.Text = snapshot.LastPropLatency.HasValue
             ? $"Latency {snapshot.LastPropLatency.Value.TotalMilliseconds:F0} ms"
             : "Latency —";
@@ -567,6 +750,8 @@ public sealed class StatusForm : Form
         _matchTimerLabel.Text = FormatMatchTimer(snapshot);
 
         UpdateFocusLabel();
+
+        UpdatePreflightChecks(snapshot);
 
         _actionLabel.Text = snapshot.LastActionDescription;
 

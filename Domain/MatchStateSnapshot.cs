@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+
 namespace LaserTag.Defusal.Domain;
 
 /// <summary>
@@ -18,7 +21,9 @@ public sealed record MatchStateSnapshot(
     TimeSpan? LastPropLatency,
     TimeSpan? LastClockLatency,
     string LastActionDescription,
-    bool FocusAcquired)
+    bool FocusAcquired,
+    IReadOnlyList<MatchPlayerSnapshotDto> Players,
+    IReadOnlyList<TeamPlayerCountSnapshot> TeamPlayerCounts)
 {
     public static readonly MatchStateSnapshot Default = new(
         MatchId: null,
@@ -35,5 +40,12 @@ public sealed record MatchStateSnapshot(
         LastPropLatency: null,
         LastClockLatency: null,
         LastActionDescription: "Idle (no match data)",
-        FocusAcquired: false);
+        FocusAcquired: false,
+        Players: Array.Empty<MatchPlayerSnapshotDto>(),
+        TeamPlayerCounts: Array.Empty<TeamPlayerCountSnapshot>());
+}
+
+public sealed record TeamPlayerCountSnapshot(string Team, int Alive, int Total)
+{
+    public override string ToString() => $"{Team}: {Alive}/{Total} alive";
 }

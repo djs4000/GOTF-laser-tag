@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using LaserTag.Defusal.Domain;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -393,6 +396,9 @@ public sealed class MatchCoordinator
 
         var propTimerRemainingMs = GetPropTimerRemainingMs(now);
 
+        var players = _lastSnapshotPayload?.Players ?? Array.Empty<MatchPlayerSnapshotDto>();
+        var teamPlayerCounts = BuildTeamPlayerCounts(players);
+
         var snapshot = new MatchStateSnapshot(
             MatchId: _currentMatchId,
             LifecycleState: _lifecycleState,
@@ -408,7 +414,9 @@ public sealed class MatchCoordinator
             LastPropLatency: _lastPropLatency,
             LastClockLatency: _lastClockLatency,
             LastActionDescription: _lastActionDescription,
-            FocusAcquired: _focusAcquired);
+            FocusAcquired: _focusAcquired,
+            Players: players,
+            TeamPlayerCounts: teamPlayerCounts);
 
         CurrentSnapshot = snapshot;
         SnapshotUpdated?.Invoke(this, snapshot);
@@ -443,6 +451,41 @@ public sealed class MatchCoordinator
         var elapsedMs = (now - _propTimerSyncedAt.Value).TotalMilliseconds;
         var remainingMs = _propTimerRemainingMs.Value - elapsedMs;
         return Math.Max(0, remainingMs);
+    }
+
+    private static IReadOnlyList<TeamPlayerCountSnapshot> BuildTeamPlayerCounts(IReadOnlyList<MatchPlayerSnapshotDto> players)
+    {
+        if (players.Count == 0)
+        {
+            return Array.Empty<TeamPlayerCountSnapshot>();
+        }
+
+        var grouped = players
+            .GroupBy(player => string.IsNullOrWhiteSpace(player.Team) ? "Unknown" : player.Team)
+            .Select(group => new TeamPlayerCountSnapshot(
+                Team: group.Key,
+                Alive: group.Count(IsPlayerAlive),
+                Total: group.Count()))
+            .OrderBy(result => result.Team, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return grouped;
+    }
+
+    private static bool IsPlayerAlive(MatchPlayerSnapshotDto player)
+    {
+        if (player.Health > 0)
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(player.State))
+        {
+            return false;
+        }
+
+        return string.Equals(player.State, "alive", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(player.State, "active", StringComparison.OrdinalIgnoreCase);
     }
 
     private void ResetForNewMatch(string matchId)
