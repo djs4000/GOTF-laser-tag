@@ -185,11 +185,11 @@ public class MatchCoordinatorTests
         var latency = coordinator.Snapshot().LastClockLatency;
 
         Assert.NotNull(latency);
-        Assert.InRange(latency!.Value.TotalMilliseconds, 2, 5_000);
+        Assert.InRange(latency!.Value.TotalMilliseconds, 0, 5_000);
     }
 
     [Fact]
-    public async Task FutureClockTimestampsAreClampedToMinimumLatency()
+    public async Task FutureClockTimestampsClampToZeroLatency()
     {
         var (coordinator, _) = CreateCoordinator();
         var futureTimestamp = DateTimeOffset.UtcNow.AddSeconds(2).ToUnixTimeMilliseconds();
@@ -207,7 +207,36 @@ public class MatchCoordinatorTests
         await coordinator.UpdateMatchSnapshotAsync(dto, CancellationToken.None);
         var latency = coordinator.Snapshot().LastClockLatency;
 
-        Assert.Equal(TimeSpan.FromMilliseconds(2), latency);
+        Assert.Equal(TimeSpan.Zero, latency);
+    }
+
+    [Fact]
+    public async Task ComputesPropLatencyFromUnixSeconds()
+    {
+        var (coordinator, _) = CreateCoordinator();
+        var propTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, propTimestamp), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = propTimestamp }, CancellationToken.None);
+
+        var latency = coordinator.Snapshot().LastPropLatency;
+
+        Assert.NotNull(latency);
+        Assert.InRange(latency!.Value.TotalMilliseconds, 0, 5_000);
+    }
+
+    [Fact]
+    public async Task FuturePropTimestampsClampToZeroLatency()
+    {
+        var (coordinator, _) = CreateCoordinator();
+        var futureTimestamp = DateTimeOffset.UtcNow.AddSeconds(2).ToUnixTimeMilliseconds();
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, DateTimeOffset.UtcNow.ToUnixTimeSeconds()), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = futureTimestamp }, CancellationToken.None);
+
+        var latency = coordinator.Snapshot().LastPropLatency;
+
+        Assert.Equal(TimeSpan.Zero, latency);
     }
 
     [Fact]

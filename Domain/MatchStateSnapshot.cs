@@ -13,6 +13,7 @@ public sealed record MatchStateSnapshot(
     double? OvertimeRemainingSec,
     DateTimeOffset? LastPropUpdate,
     DateTimeOffset? LastClockUpdate,
+    TimeSpan? LastPropLatency,
     TimeSpan? LastClockLatency,
     string LastActionDescription,
     bool FocusAcquired)
@@ -27,6 +28,7 @@ public sealed record MatchStateSnapshot(
         OvertimeRemainingSec: null,
         LastPropUpdate: null,
         LastClockUpdate: null,
+        LastPropLatency: null,
         LastClockLatency: null,
         LastActionDescription: "Idle (no match data)",
         FocusAcquired: false);

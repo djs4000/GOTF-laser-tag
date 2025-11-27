@@ -28,6 +28,7 @@ public sealed class MatchCoordinator
     private double _lastElapsedSec;
     private DateTimeOffset? _lastClockUpdate;
     private DateTimeOffset? _lastPropUpdate;
+    private TimeSpan? _lastPropLatency;
     private TimeSpan? _lastClockLatency;
     private string _lastActionDescription = "Idle";
     private bool _focusAcquired;
@@ -66,6 +67,11 @@ public sealed class MatchCoordinator
 
         lock (_sync)
         {
+            var now = DateTimeOffset.UtcNow;
+            var sourceTimestamp = ParseSnapshotTimestamp(dto.Timestamp, now);
+            var observedLatency = now - sourceTimestamp;
+            _lastPropLatency = observedLatency < TimeSpan.Zero ? TimeSpan.Zero : observedLatency;
+
             if (_matchEnded && IsTerminalState(_lifecycleState))
             {
                 return CurrentSnapshot;
@@ -79,7 +85,7 @@ public sealed class MatchCoordinator
 
             incomingState = dto.State;
             _lastPropTimestamp = dto.Timestamp;
-            _lastPropUpdate = DateTimeOffset.UtcNow;
+            _lastPropUpdate = now;
             _lastPropPayload = dto;
             _propState = incomingState;
 
@@ -153,15 +159,7 @@ public sealed class MatchCoordinator
             var now = DateTimeOffset.UtcNow;
             var sourceTimestamp = ParseSnapshotTimestamp(dto.Timestamp, now);
             var observedLatency = now - sourceTimestamp;
-            var minimumLatency = TimeSpan.FromMilliseconds(2);
-            if (observedLatency <= TimeSpan.Zero)
-            {
-                _lastClockLatency = minimumLatency;
-            }
-            else
-            {
-                _lastClockLatency = observedLatency < minimumLatency ? minimumLatency : observedLatency;
-            }
+            _lastClockLatency = observedLatency < TimeSpan.Zero ? TimeSpan.Zero : observedLatency;
 
             if (string.IsNullOrWhiteSpace(dto.Id))
             {
@@ -320,6 +318,7 @@ public sealed class MatchCoordinator
             _lastMatchRemainingMs = null;
             _lastClockUpdate = null;
             _lastPropUpdate = null;
+            _lastPropLatency = null;
             _lastClockLatency = null;
             _lastActionDescription = "Idle (no match data)";
             _focusAcquired = false;
@@ -391,6 +390,7 @@ public sealed class MatchCoordinator
             OvertimeRemainingSec: overtimeRemaining,
             LastPropUpdate: _lastPropUpdate,
             LastClockUpdate: _lastClockUpdate,
+            LastPropLatency: _lastPropLatency,
             LastClockLatency: _lastClockLatency,
             LastActionDescription: _lastActionDescription,
             FocusAcquired: _focusAcquired);
@@ -428,6 +428,8 @@ public sealed class MatchCoordinator
         _focusAcquired = false;
         _lastPropPayload = null;
         _lastSnapshotPayload = null;
+        _lastPropLatency = null;
+        _lastClockLatency = null;
     }
 
     private static DateTimeOffset ParseSnapshotTimestamp(long timestamp, DateTimeOffset fallback)

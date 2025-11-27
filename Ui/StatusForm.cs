@@ -33,7 +33,8 @@ public sealed class StatusForm : Form
     private readonly Label _overtimeLabel = new();
     private readonly Label _propLabel = new();
     private readonly Label _plantLabel = new();
-    private readonly Label _latencyLabel = new();
+    private readonly Label _matchLatencyLabel = new();
+    private readonly Label _propLatencyLabel = new();
     private readonly Label _defuseTimerLabel = new();
     private readonly Label _matchTimerLabel = new();
     private readonly Label _focusLabel = new();
@@ -75,7 +76,7 @@ public sealed class StatusForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 2,
-            RowCount = 11,
+            RowCount = 12,
             Padding = new Padding(10),
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink
@@ -90,7 +91,8 @@ public sealed class StatusForm : Form
         AddRow(layout, "State", CreateStatePanel());
         AddRow(layout, "Prop", _propLabel);
         AddRow(layout, "Bomb", _plantLabel);
-        AddRow(layout, "Clock", _latencyLabel);
+        AddRow(layout, "Match clock", _matchLatencyLabel);
+        AddRow(layout, "Prop clock", _propLatencyLabel);
         AddRow(layout, "Defuse timer", _defuseTimerLabel);
         AddRow(layout, "Match timer", _matchTimerLabel);
         AddRow(layout, "Focus", CreateFocusPanel());
@@ -453,8 +455,12 @@ public sealed class StatusForm : Form
             ? $"{snapshot.PlantTimeSec.Value:F1}s"
             : "—";
 
-        _latencyLabel.Text = snapshot.LastClockLatency.HasValue
+        _matchLatencyLabel.Text = snapshot.LastClockLatency.HasValue
             ? $"Latency {snapshot.LastClockLatency.Value.TotalMilliseconds:F0} ms"
+            : "Latency —";
+
+        _propLatencyLabel.Text = snapshot.LastPropLatency.HasValue
+            ? $"Latency {snapshot.LastPropLatency.Value.TotalMilliseconds:F0} ms"
             : "Latency —";
 
         _defuseTimerLabel.Text = snapshot.IsOvertime && snapshot.OvertimeRemainingSec is not null
