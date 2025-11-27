@@ -10,6 +10,8 @@ internal static class NativeMethods
     public const ushort VK_CONTROL = 0x11;
     public const ushort VK_S = 0x53;
     public const ushort KEYEVENTF_KEYUP = 0x0002;
+    public const uint TOKEN_QUERY = 0x0008;
+    public const int TokenElevation = 20;
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
@@ -41,6 +43,15 @@ internal static class NativeMethods
     [DllImport("kernel32.dll")]
     public static extern uint GetCurrentThreadId();
 
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern bool OpenProcessToken(IntPtr processHandle, uint desiredAccess, out IntPtr tokenHandle);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern bool GetTokenInformation(IntPtr tokenHandle, int tokenInformationClass, IntPtr tokenInformation, int tokenInformationLength, out int returnLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CloseHandle(IntPtr hObject);
+
     [StructLayout(LayoutKind.Sequential)]
     public struct INPUT
     {
@@ -62,5 +73,11 @@ internal static class NativeMethods
         public uint dwFlags;
         public uint time;
         public IntPtr dwExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct TOKEN_ELEVATION
+    {
+        public int TokenIsElevated;
     }
 }
