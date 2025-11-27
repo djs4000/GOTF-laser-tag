@@ -136,6 +136,35 @@ public class MatchCoordinatorTests
         Assert.Equal(matchTimestamp, response.Timestamp);
     }
 
+    [Fact]
+    public async Task IgnoresUnexpectedMatchIdWhileActive()
+    {
+        var (coordinator, _) = CreateCoordinator();
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Running, 200_000, 1), CancellationToken.None);
+
+        // Incoming snapshot claims a different match id but represents a running game; it should be ignored.
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("beta", MatchSnapshotStatus.Running, 199_000, 2), CancellationToken.None);
+
+        var snapshot = coordinator.Snapshot();
+        Assert.Equal("alpha", snapshot.MatchId);
+        Assert.Equal(MatchLifecycleState.Running, snapshot.LifecycleState);
+        Assert.Equal(200_000, snapshot.RemainingTimeMs);
+    }
+
+    [Fact]
+    public async Task AllowsNewMatchAfterTerminalState()
+    {
+        var (coordinator, _) = CreateCoordinator();
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Completed, 0, 1), CancellationToken.None);
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("beta", MatchSnapshotStatus.WaitingOnStart, 400_000, 2), CancellationToken.None);
+
+        var snapshot = coordinator.Snapshot();
+        Assert.Equal("beta", snapshot.MatchId);
+        Assert.Equal(MatchLifecycleState.WaitingOnStart, snapshot.LifecycleState);
+        Assert.Equal(400_000, snapshot.RemainingTimeMs);
+    }
+
     private static MatchSnapshotDto NewSnapshot(string id, MatchSnapshotStatus status, int remainingMs, long secondsFromEpoch)
     {
         var timestamp = DateTimeOffset.UnixEpoch.AddSeconds(secondsFromEpoch).UtcDateTime.Ticks;
