@@ -152,10 +152,15 @@ public sealed class MatchCoordinator
         {
             var now = DateTimeOffset.UtcNow;
             var sourceTimestamp = ParseSnapshotTimestamp(dto.Timestamp, now);
-            _lastClockLatency = now - sourceTimestamp;
-            if (_lastClockLatency < TimeSpan.Zero)
+            var observedLatency = now - sourceTimestamp;
+            var minimumLatency = TimeSpan.FromMilliseconds(2);
+            if (observedLatency <= TimeSpan.Zero)
             {
-                _lastClockLatency = TimeSpan.Zero;
+                _lastClockLatency = minimumLatency;
+            }
+            else
+            {
+                _lastClockLatency = observedLatency < minimumLatency ? minimumLatency : observedLatency;
             }
 
             if (string.IsNullOrWhiteSpace(dto.Id))

@@ -185,7 +185,29 @@ public class MatchCoordinatorTests
         var latency = coordinator.Snapshot().LastClockLatency;
 
         Assert.NotNull(latency);
-        Assert.InRange(latency!.Value.TotalSeconds, 0, 5);
+        Assert.InRange(latency!.Value.TotalMilliseconds, 2, 5_000);
+    }
+
+    [Fact]
+    public async Task FutureClockTimestampsAreClampedToMinimumLatency()
+    {
+        var (coordinator, _) = CreateCoordinator();
+        var futureTimestamp = DateTimeOffset.UtcNow.AddSeconds(2).ToUnixTimeMilliseconds();
+        var dto = new MatchSnapshotDto
+        {
+            Id = "match",
+            Status = MatchSnapshotStatus.Running,
+            RemainingTimeMs = 200_000,
+            Timestamp = futureTimestamp,
+            WinnerTeam = null,
+            IsLastSend = false,
+            Players = Array.Empty<MatchPlayerSnapshotDto>()
+        };
+
+        await coordinator.UpdateMatchSnapshotAsync(dto, CancellationToken.None);
+        var latency = coordinator.Snapshot().LastClockLatency;
+
+        Assert.Equal(TimeSpan.FromMilliseconds(2), latency);
     }
 
     [Fact]
