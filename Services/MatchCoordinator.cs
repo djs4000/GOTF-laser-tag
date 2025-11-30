@@ -18,6 +18,7 @@ public sealed class MatchCoordinator
     private readonly RelayService _relayService;
     private readonly IFocusService _focusService;
     private readonly UiAutomationOptions _uiAutomationOptions;
+    private readonly TimeSynchronizationService _timeSyncService;
     private readonly object _sync = new();
 
     private MatchLifecycleState _lifecycleState = MatchLifecycleState.Idle;
@@ -52,11 +53,13 @@ public sealed class MatchCoordinator
         RelayService relayService,
         IFocusService focusService,
         IOptions<UiAutomationOptions> uiAutomationOptions,
+        TimeSynchronizationService timeSyncService,
         ILogger<MatchCoordinator> logger)
     {
         _relayService = relayService;
         _focusService = focusService;
         _uiAutomationOptions = uiAutomationOptions.Value;
+        _timeSyncService = timeSyncService;
         _logger = logger;
         _matchOptions = matchOptions.Value;
     }
@@ -69,12 +72,13 @@ public sealed class MatchCoordinator
         bool shouldTriggerEnd = false;
         string? triggerReason = null;
         PropState incomingState;
+        var normalizedTime = _timeSyncService.NormalizePropTime(dto.Timestamp, dto.UptimeMs);
+        var normalizedTimestampMs = normalizedTime.ToUnixTimeMilliseconds();
 
         lock (_sync)
         {
             var now = DateTimeOffset.UtcNow;
-            var sourceTimestamp = ParseSnapshotTimestamp(dto.Timestamp, now);
-            var observedLatency = now - sourceTimestamp;
+            var observedLatency = now - normalizedTime;
             _lastPropLatency = observedLatency < TimeSpan.Zero ? TimeSpan.Zero : observedLatency;
 
             if (_matchEnded && IsTerminalState(_lifecycleState))
@@ -82,14 +86,14 @@ public sealed class MatchCoordinator
                 return CurrentSnapshot;
             }
 
-            if (dto.Timestamp < _lastPropTimestamp)
+            if (normalizedTimestampMs < _lastPropTimestamp)
             {
-                _logger.LogWarning("Out-of-order prop payload ignored (timestamp {Timestamp})", dto.Timestamp);
+                _logger.LogWarning("Out-of-order prop payload ignored (timestamp {Timestamp})", normalizedTimestampMs);
                 return CurrentSnapshot;
             }
 
             incomingState = dto.State;
-            _lastPropTimestamp = dto.Timestamp;
+            _lastPropTimestamp = normalizedTimestampMs;
             _lastPropUpdate = now;
             _lastPropPayload = dto;
             _propState = incomingState;
@@ -97,7 +101,7 @@ public sealed class MatchCoordinator
             if (dto.TimerMs is not null)
             {
                 _propTimerRemainingMs = Math.Max(0, dto.TimerMs.Value);
-                _propTimerSyncedAt = now;
+                _propTimerSyncedAt = normalizedTime;
             }
 
             if (_lifecycleState is MatchLifecycleState.Idle or MatchLifecycleState.WaitingOnStart or MatchLifecycleState.Countdown)

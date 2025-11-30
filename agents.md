@@ -55,11 +55,13 @@ The system uses a pragmatic ("hacky") trigger to integrate with a closed applica
 ```json
 {
   "timestamp": 1761553673,
+  "uptime_ms": 1234567,
   "state": "planted" // "armed", "defusing", "defused", "exploded"
 }
 ```
 **Behavior**
 - Updates prop FSM.
+- `uptime_ms` (preferred) is milliseconds since prop boot; used to correct drift. Falls back to `timestamp` if missing.
 - `exploded` → EndMatch immediately.
 - `planted` → record `plantTime` and unlock overtime logic.
 - `defused` → EndMatch immediately.
@@ -185,6 +187,11 @@ stateDiagram-v2
 - Debounce EndMatch triggers.
 - Log transitions, overtime events, relay posts, and focus attempts.
 - Warn if focus repeatedly fails.
+
+### Server-Authoritative Synchronization
+- App is the time authority. First prop packet establishes a fixed offset between app clock and prop uptime/timestamp.
+- All future prop timestamps are normalized using this cached offset (uptime_ms preferred over timestamp).
+- If no prop packet is received for 15 seconds (configurable via `Match:PropSessionTimeoutSeconds`), the session is invalidated and the next packet recalculates offset. Logged at Information level.
 
 ---
 

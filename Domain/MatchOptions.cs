@@ -14,4 +14,6 @@ public sealed class MatchOptions
     public int ClockExpectedHz { get; set; } = 10;
 
     public int PreflightExpectedMatchLengthSec { get; set; } = 219;
+
+    public int PropSessionTimeoutSeconds { get; set; } = 15;
 }
