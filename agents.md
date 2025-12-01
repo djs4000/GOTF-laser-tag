@@ -90,17 +90,17 @@ The system uses a pragmatic ("hacky") trigger to integrate with a closed applica
 - Player data is accepted but ignored for defusal logic.
 
 ### Relay (outbound)
-If enabled, the application forwards POSTs `{ match, prop, clock, fsm }` to the configured `RelayUrl`. Supports optional bearer token.
+If enabled, the application forwards POSTs to the configured `RelayUrl`. Supports optional bearer token.
 
 ### Relay Destinations
-- **Match endpoint**: Receives `{ match, prop, clock, fsm }` payloads (including winner overrides on terminal snapshots).
+- **Match endpoint**: Receives the raw match snapshot payload the host provided. On terminal snapshots, the coordinator may update the status (e.g., promote `WaitingOnFinalData` to `Completed`) and override `winner_team` per defusal logic before relaying.
 - **Prop endpoint**: Receives the raw prop payload (e.g., `{ timestamp, uptime_ms, state, timer }`) without match metadata so prop
   consumers get an unwrapped echo of the device state.
 - Both endpoints reuse the same bearer token. `Relay:MatchUrl` and `Relay:PropUrl` can be configured independently; `Relay:Url` remains as a backward-compatible default when specific URLs are not provided.
 
 ### Winner Override Logic
 - The laser tag host remains authoritative for lifecycle transitions, but the coordinator recalculates the winner for downstream consumers when defusal rules produce a clear outcome.
-- On terminal snapshots (`WaitingOnFinalData`, `Completed`, `Cancelled`), the relay payload preserves the host-reported status and timing yet overwrites `winner_team` if defusal rules dictate:
+- On terminal snapshots (`WaitingOnFinalData`, `Completed`, `Cancelled`), the relay payload overwrites `winner_team` if defusal rules dictate and may promote `status` to `Completed` when final data is available:
   - `detonated` → Attacking team wins.
   - `defused` → Defending team wins.
   - Bomb planted and the defuse window has elapsed → Attacking team wins (implicit detonation).

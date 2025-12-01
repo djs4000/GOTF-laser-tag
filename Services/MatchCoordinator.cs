@@ -503,37 +503,36 @@ public sealed class MatchCoordinator
 
         if (_relayService.IsEnabled)
         {
-            var clockPayload = _lastSnapshotPayload;
-            if (clockPayload is not null && IsTerminalStatus(clockPayload.Status))
+            if (_relayService.CanRelayMatch && _lastSnapshotPayload is not null)
             {
-                var expectedWinner = GetExpectedWinner();
-                var isWinnerMismatch = !string.IsNullOrWhiteSpace(expectedWinner)
-                    && !string.Equals(clockPayload.WinnerTeam, expectedWinner, StringComparison.Ordinal);
+                var matchRelayPayload = _lastSnapshotPayload;
 
-                if (isWinnerMismatch)
+                if (IsTerminalStatus(matchRelayPayload.Status))
                 {
-                    clockPayload = new MatchSnapshotDto
+                    var expectedWinner = GetExpectedWinner();
+                    var isWinnerMismatch = !string.IsNullOrWhiteSpace(expectedWinner)
+                        && !string.Equals(matchRelayPayload.WinnerTeam, expectedWinner, StringComparison.Ordinal);
+                    var updatedStatus = matchRelayPayload.Status;
+
+                    if (expectedWinner is not null && matchRelayPayload.Status == MatchSnapshotStatus.WaitingOnFinalData)
                     {
-                        Id = clockPayload.Id,
-                        Timestamp = clockPayload.Timestamp,
-                        IsLastSend = clockPayload.IsLastSend,
-                        Status = clockPayload.Status,
-                        RemainingTimeMs = clockPayload.RemainingTimeMs,
-                        WinnerTeam = expectedWinner!,
-                        Players = clockPayload.Players
-                    };
-                }
-            }
+                        updatedStatus = MatchSnapshotStatus.Completed;
+                    }
 
-            if (_relayService.CanRelayMatch)
-            {
-                var matchRelayPayload = new
-                {
-                    match = _currentMatchId,
-                    prop = _lastPropPayload,
-                    clock = clockPayload,
-                    fsm = snapshot
-                };
+                    if (isWinnerMismatch || updatedStatus != matchRelayPayload.Status)
+                    {
+                        matchRelayPayload = new MatchSnapshotDto
+                        {
+                            Id = matchRelayPayload.Id,
+                            Timestamp = matchRelayPayload.Timestamp,
+                            IsLastSend = matchRelayPayload.IsLastSend,
+                            Status = updatedStatus,
+                            RemainingTimeMs = matchRelayPayload.RemainingTimeMs,
+                            WinnerTeam = isWinnerMismatch ? expectedWinner : matchRelayPayload.WinnerTeam,
+                            Players = matchRelayPayload.Players
+                        };
+                    }
+                }
 
                 _ = _relayService.TryRelayMatchAsync(matchRelayPayload, CancellationToken.None);
             }
