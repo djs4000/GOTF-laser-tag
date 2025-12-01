@@ -23,4 +23,9 @@ public sealed class MatchOptions
     /// If no prop heartbeat is received within this window, the time offset is invalidated.
     /// </summary>
     public int PropSessionTimeoutSeconds { get; set; } = 10;
+
+    /// <summary>
+    /// How long to wait for the final data packet from the host before forcing a relay.
+    /// </summary>
+    public int FinalDataTimeoutMs { get; set; } = 2000;
 }

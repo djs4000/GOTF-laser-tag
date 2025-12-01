@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using LaserTag.Defusal.Domain;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -11,7 +13,7 @@ namespace LaserTag.Defusal.Services;
 /// Central orchestrator that consumes prop and clock updates, evaluates match-ending conditions,
 /// and issues UI automation commands when required.
 /// </summary>
-public sealed class MatchCoordinator
+public sealed class MatchCoordinator : IDisposable
 {
     private readonly ILogger<MatchCoordinator> _logger;
     private readonly MatchOptions _matchOptions;
@@ -46,6 +48,7 @@ public sealed class MatchCoordinator
     private double? _propTimerRemainingMs;
     private DateTimeOffset? _propTimerSyncedAt;
     private string _attackingTeam = "Team 1";
+    private CancellationTokenSource? _finalDataTimeoutCts;
 
     public event EventHandler<MatchStateSnapshot>? SnapshotUpdated;
 
@@ -304,6 +307,14 @@ public sealed class MatchCoordinator
                 case MatchSnapshotStatus.Completed:
                     _lifecycleState = MatchLifecycleState.Completed;
                     _matchEnded = true;
+                    if (dto.IsLastSend)
+                    {
+                        CancelFinalDataTimeoutLocked();
+                    }
+                    else
+                    {
+                        EnsureFinalDataTimeoutScheduledLocked();
+                    }
                     break;
                 case MatchSnapshotStatus.Cancelled:
                     _lifecycleState = MatchLifecycleState.Cancelled;
@@ -366,6 +377,7 @@ public sealed class MatchCoordinator
     {
         lock (_sync)
         {
+            CancelFinalDataTimeoutLocked();
             _currentMatchId = null;
             _propState = PropState.Idle;
             _plantTimeSec = null;
@@ -464,7 +476,7 @@ public sealed class MatchCoordinator
         return null;
     }
 
-    private void PublishSnapshotLocked(string source)
+    private void PublishSnapshotLocked(string source, bool forceRelay = false)
     {
         var now = DateTimeOffset.UtcNow;
         var overtimeActive = _plantTimeSec is not null && _plantTimeSec.Value >= _matchOptions.AutoEndNoPlantAtSec && !_matchEnded;
@@ -507,34 +519,45 @@ public sealed class MatchCoordinator
             {
                 var matchRelayPayload = _lastSnapshotPayload;
 
-                if (IsTerminalStatus(matchRelayPayload.Status))
+                var shouldHoldFinalData = _lastSnapshotPayload.Status == MatchSnapshotStatus.Completed
+                    && !_lastSnapshotPayload.IsLastSend
+                    && !forceRelay;
+
+                if (shouldHoldFinalData)
                 {
-                    var expectedWinner = GetExpectedWinner();
-                    var isWinnerMismatch = !string.IsNullOrWhiteSpace(expectedWinner)
-                        && !string.Equals(matchRelayPayload.WinnerTeam, expectedWinner, StringComparison.Ordinal);
-                    var updatedStatus = matchRelayPayload.Status;
-
-                    if (expectedWinner is not null && matchRelayPayload.Status == MatchSnapshotStatus.WaitingOnFinalData)
-                    {
-                        updatedStatus = MatchSnapshotStatus.Completed;
-                    }
-
-                    if (isWinnerMismatch || updatedStatus != matchRelayPayload.Status)
-                    {
-                        matchRelayPayload = new MatchSnapshotDto
-                        {
-                            Id = matchRelayPayload.Id,
-                            Timestamp = matchRelayPayload.Timestamp,
-                            IsLastSend = matchRelayPayload.IsLastSend,
-                            Status = updatedStatus,
-                            RemainingTimeMs = matchRelayPayload.RemainingTimeMs,
-                            WinnerTeam = isWinnerMismatch ? expectedWinner : matchRelayPayload.WinnerTeam,
-                            Players = matchRelayPayload.Players
-                        };
-                    }
+                    _logger.LogDebug("Buffering relay waiting for final data");
                 }
+                else
+                {
+                    if (IsTerminalStatus(matchRelayPayload.Status))
+                    {
+                        var expectedWinner = GetExpectedWinner();
+                        var isWinnerMismatch = !string.IsNullOrWhiteSpace(expectedWinner)
+                            && !string.Equals(matchRelayPayload.WinnerTeam, expectedWinner, StringComparison.Ordinal);
+                        var updatedStatus = matchRelayPayload.Status;
 
-                _ = _relayService.TryRelayMatchAsync(matchRelayPayload, CancellationToken.None);
+                        if (expectedWinner is not null && matchRelayPayload.Status == MatchSnapshotStatus.WaitingOnFinalData)
+                        {
+                            updatedStatus = MatchSnapshotStatus.Completed;
+                        }
+
+                        if (isWinnerMismatch || updatedStatus != matchRelayPayload.Status)
+                        {
+                            matchRelayPayload = new MatchSnapshotDto
+                            {
+                                Id = matchRelayPayload.Id,
+                                Timestamp = matchRelayPayload.Timestamp,
+                                IsLastSend = matchRelayPayload.IsLastSend,
+                                Status = updatedStatus,
+                                RemainingTimeMs = matchRelayPayload.RemainingTimeMs,
+                                WinnerTeam = isWinnerMismatch ? expectedWinner : matchRelayPayload.WinnerTeam,
+                                Players = matchRelayPayload.Players
+                            };
+                        }
+                    }
+
+                    _ = _relayService.TryRelayMatchAsync(matchRelayPayload, CancellationToken.None);
+                }
             }
 
             if (_relayService.CanRelayProp && _lastPropPayload is not null)
@@ -629,6 +652,7 @@ public sealed class MatchCoordinator
         _clockLatency = null;
         _propTimerRemainingMs = null;
         _propTimerSyncedAt = null;
+        CancelFinalDataTimeoutLocked();
     }
 
     private static DateTimeOffset ParseSnapshotTimestamp(long timestamp, DateTimeOffset fallback)
@@ -727,5 +751,56 @@ public sealed class MatchCoordinator
         var average = TimeSpan.FromMilliseconds(averageMs);
 
         return new LatencySampleSnapshot(Average: average, Minimum: min, Maximum: max, SampleCount: samples.Count);
+    }
+
+    public void Dispose()
+    {
+        lock (_sync)
+        {
+            CancelFinalDataTimeoutLocked();
+        }
+    }
+
+    private void EnsureFinalDataTimeoutScheduledLocked()
+    {
+        if (_finalDataTimeoutCts is not null)
+        {
+            return;
+        }
+
+        var timeoutMs = Math.Max(0, _matchOptions.FinalDataTimeoutMs);
+        var cts = new CancellationTokenSource();
+        _finalDataTimeoutCts = cts;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(timeoutMs, cts.Token).ConfigureAwait(false);
+            }
+            catch (TaskCanceledException)
+            {
+                return;
+            }
+
+            lock (_sync)
+            {
+                if (cts.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                _logger.LogWarning("Final data timeout - forcing relay");
+                PublishSnapshotLocked("Final Data Timeout", forceRelay: true);
+                CancelFinalDataTimeoutLocked();
+            }
+        });
+    }
+
+    private void CancelFinalDataTimeoutLocked()
+    {
+        _finalDataTimeoutCts?.Cancel();
+        _finalDataTimeoutCts?.Dispose();
+        _finalDataTimeoutCts = null;
     }
 }
