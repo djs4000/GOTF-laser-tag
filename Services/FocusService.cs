@@ -24,6 +24,8 @@ public sealed class FocusService : IFocusService
     private readonly Regex _titleRegex;
     private readonly string _targetProcessName;
     private readonly bool _isCurrentProcessElevated;
+    private int? _cachedProcessId;
+    private IntPtr _cachedWindowHandle;
     private SynchronizationContext? _uiContext;
 
     public FocusService(IOptions<UiAutomationOptions> options, ILogger<FocusService> logger)
@@ -81,10 +83,10 @@ public sealed class FocusService : IFocusService
 
     private async Task<FocusActionResult> ExecuteAsync(string reason, bool sendShortcut, CancellationToken cancellationToken)
     {
-        var targetProcess = FindTargetProcess();
-        if (targetProcess is null || targetProcess.MainWindowHandle == IntPtr.Zero)
+        var targetProcess = GetTargetProcess();
+        if (targetProcess is null)
         {
-            var message = "Target window not found";
+            var message = "Target process not found";
             _logger.LogWarning("{Message}. Ensure process {Process} with title {TitleRegex} is running.", message, _options.ProcessName, _options.WindowTitleRegex);
             return new FocusActionResult(false, message);
         }
@@ -118,7 +120,7 @@ public sealed class FocusService : IFocusService
 
             if (!NativeMethods.SetForegroundWindow(handle))
             {
-                _logger.LogWarning("SetForegroundWindow failed with error {Error}", Marshal.GetLastPInvokeError());
+                _logger.LogWarning("SetForegroundWindow failed with error {Error} for handle {Handle}", Marshal.GetLastPInvokeError(), handle);
                 return new FocusActionResult(false, "Failed to focus target window");
             }
 
@@ -126,7 +128,7 @@ public sealed class FocusService : IFocusService
 
             if (sendShortcut)
             {
-                if (!await TrySendShortcutAsync(cancellationToken).ConfigureAwait(true))
+                if (!TrySendShortcut())
                 {
                     var failureDescription = !_isCurrentProcessElevated && elevationKnown && isTargetElevated
                         ? "Failed to send shortcut; target process is elevated—run this app as administrator"
@@ -181,7 +183,11 @@ public sealed class FocusService : IFocusService
                 using var process = Process.GetProcessById((int)processId);
                 if (string.Equals(process.ProcessName, _targetProcessName, StringComparison.OrdinalIgnoreCase))
                 {
-                    isTarget = !string.IsNullOrEmpty(title) && _titleRegex.IsMatch(title);
+                    // A game window might have an empty title, but if the process name matches,
+                    // we can be reasonably sure it's our target. The regex is a secondary check.
+                    isTarget = string.IsNullOrEmpty(title)
+                        ? process.MainWindowHandle == foregroundHandle
+                        : _titleRegex.IsMatch(title);
                 }
             }
         }
@@ -193,31 +199,56 @@ public sealed class FocusService : IFocusService
         return new FocusWindowInfo(foregroundHandle, title, isTarget);
     }
 
-    private Process? FindTargetProcess()
+    private Process? GetTargetProcess()
     {
-        var candidates = Process.GetProcessesByName(_targetProcessName);
-        foreach (var process in candidates)
+        if (_cachedProcessId.HasValue)
         {
             try
             {
-                if (process.MainWindowHandle == IntPtr.Zero)
+                var process = Process.GetProcessById(_cachedProcessId.Value);
+                if (process.MainWindowHandle == _cachedWindowHandle && _cachedWindowHandle != IntPtr.Zero)
                 {
-                    continue;
-                }
-
-                var title = process.MainWindowTitle;
-                if (!string.IsNullOrEmpty(title) && _titleRegex.IsMatch(title))
-                {
-                    return process;
+                    return process; // Return cached process if handle is still valid.
                 }
             }
-            catch (Exception ex)
+            catch (ArgumentException)
             {
-                _logger.LogDebug(ex, "Unable to inspect process {ProcessId}", process.Id);
+                // Process has exited.
             }
         }
 
-        return null;
+        // Invalidate cache and re-scan.
+        _cachedProcessId = null;
+        _cachedWindowHandle = IntPtr.Zero;
+
+        var candidates = Process.GetProcessesByName(_targetProcessName).Where(p => p.MainWindowHandle != IntPtr.Zero).ToArray();
+        if (candidates.Length == 0)
+        {
+            return null;
+        }
+
+        // Prefer a process whose window title matches the regex.
+        foreach (var process in candidates)
+        {
+            var title = process.MainWindowTitle;
+            if (!string.IsNullOrEmpty(title) && _titleRegex.IsMatch(title))
+            {
+                _cachedProcessId = process.Id;
+                _cachedWindowHandle = process.MainWindowHandle;
+                return process;
+            }
+        }
+
+        // As a fallback, if only one instance is running, use it even if the title doesn't match.
+        if (candidates.Length == 1)
+        {
+            var process = candidates[0];
+            _cachedProcessId = process.Id;
+            _cachedWindowHandle = process.MainWindowHandle;
+            return process;
+        }
+
+        return null; // Ambiguous which process to target.
     }
 
     private static string? ReadWindowTitle(IntPtr handle)
@@ -234,22 +265,28 @@ public sealed class FocusService : IFocusService
             : null;
     }
 
-    private static Task<bool> TrySendShortcutAsync(CancellationToken cancellationToken)
+    private bool TrySendShortcut()
     {
-        try
+        var inputs = new[]
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            SendKeys.SendWait("^s");
-            return Task.FromResult(true);
-        }
-        catch (OperationCanceledException)
-        {
-            return Task.FromResult(false);
-        }
-        catch (Exception)
-        {
-            return Task.FromResult(false);
-        }
+            // Press Ctrl
+            CreateKeyboardInput(new NativeMethods.KEYBDINPUT { wVk = NativeMethods.VK_CONTROL }),
+            // Press S
+            CreateKeyboardInput(new NativeMethods.KEYBDINPUT { wVk = NativeMethods.VK_S }),
+            // Release S
+            CreateKeyboardInput(new NativeMethods.KEYBDINPUT { wVk = NativeMethods.VK_S, dwFlags = NativeMethods.KEYEVENTF_KEYUP }),
+            // Release Ctrl
+            CreateKeyboardInput(new NativeMethods.KEYBDINPUT { wVk = NativeMethods.VK_CONTROL, dwFlags = NativeMethods.KEYEVENTF_KEYUP })
+        };
+
+        return NativeMethods.SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeMethods.INPUT>()) > 0;
+    }
+
+    private static NativeMethods.INPUT CreateKeyboardInput(NativeMethods.KEYBDINPUT keyboardInput)
+    {
+        var input = new NativeMethods.INPUT { type = NativeMethods.INPUT_KEYBOARD };
+        input.ki = keyboardInput;
+        return input;
     }
 
     private static bool TryGetElevation(Process process, out bool isElevated)
