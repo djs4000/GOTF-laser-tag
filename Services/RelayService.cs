@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using LaserTag.Defusal.Domain;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -15,6 +16,7 @@ public sealed class RelayService
     private readonly HttpClient _httpClient;
     private readonly ILogger<RelayService> _logger;
     private readonly RelayOptions _options;
+    private readonly JsonSerializerOptions _serializerOptions;
 
     public RelayService(IOptions<RelayOptions> options, ILogger<RelayService> logger)
     {
@@ -24,6 +26,9 @@ public sealed class RelayService
         {
             Timeout = TimeSpan.FromSeconds(5)
         };
+
+        _serializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        _serializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false));
     }
 
     public bool IsEnabled => _options.Enabled && (CanRelayMatch || CanRelayProp);
@@ -62,7 +67,7 @@ public sealed class RelayService
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.BearerToken);
             }
 
-            var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var json = JsonSerializer.Serialize(payload, _serializerOptions);
             request.Content = new StringContent(json, Encoding.UTF8, "application/json");
 
             var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
