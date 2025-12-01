@@ -540,11 +540,12 @@ public sealed class MatchCoordinator
 
             if (_relayService.CanRelayProp && _lastPropPayload is not null)
             {
-                var propRelayPayload = new
+                var propRelayPayload = new PropStatusDto
                 {
-                    match = _currentMatchId,
-                    prop = _lastPropPayload,
-                    fsm = snapshot
+                    Timestamp = _lastPropPayload.Timestamp,
+                    State = _lastPropPayload.State,
+                    TimerMs = _lastPropPayload.TimerMs,
+                    UptimeMs = _lastPropPayload.UptimeMs
                 };
 
                 _ = _relayService.TryRelayPropAsync(propRelayPayload, CancellationToken.None);

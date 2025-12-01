@@ -94,7 +94,8 @@ If enabled, the application forwards POSTs `{ match, prop, clock, fsm }` to the 
 
 ### Relay Destinations
 - **Match endpoint**: Receives `{ match, prop, clock, fsm }` payloads (including winner overrides on terminal snapshots).
-- **Prop endpoint**: Receives `{ match, prop, fsm }` payloads for prop-specific consumers.
+- **Prop endpoint**: Receives the raw prop payload (e.g., `{ timestamp, uptime_ms, state, timer }`) without match metadata so prop
+  consumers get an unwrapped echo of the device state.
 - Both endpoints reuse the same bearer token. `Relay:MatchUrl` and `Relay:PropUrl` can be configured independently; `Relay:Url` remains as a backward-compatible default when specific URLs are not provided.
 
 ### Winner Override Logic
