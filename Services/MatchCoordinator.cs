@@ -491,33 +491,13 @@ public sealed class MatchCoordinator : IDisposable
         var players = _lastSnapshotPayload?.Players ?? Array.Empty<MatchPlayerSnapshotDto>();
         var teamPlayerCounts = BuildTeamPlayerCounts(players);
 
-        var snapshot = new MatchStateSnapshot(
-            MatchId: _currentMatchId,
-            LifecycleState: _lifecycleState,
-            PropState: _propState,
-            PlantTimeSec: _plantTimeSec,
-            RemainingTimeMs: _lastMatchRemainingMs,
-            IsOvertime: overtimeActive,
-            OvertimeRemainingSec: overtimeRemaining,
-            PropTimerRemainingMs: propTimerRemainingMs,
-            PropTimerSyncedAt: _propTimerSyncedAt,
-            LastPropUpdate: _lastPropUpdate,
-            LastClockUpdate: _lastClockUpdate,
-            PropLatency: _propLatency,
-            ClockLatency: _clockLatency,
-            LastActionDescription: _lastActionDescription,
-            FocusAcquired: _focusAcquired,
-            Players: players,
-            TeamPlayerCounts: teamPlayerCounts);
-
-        CurrentSnapshot = snapshot;
-        SnapshotUpdated?.Invoke(this, snapshot);
+        MatchSnapshotDto? matchRelayPayload = null;
 
         if (_relayService.IsEnabled)
         {
             if (_relayService.CanRelayMatch && _lastSnapshotPayload is not null)
             {
-                var matchRelayPayload = _lastSnapshotPayload;
+                var localRelayPayload = _lastSnapshotPayload;
 
                 var shouldHoldFinalData = _lastSnapshotPayload.Status == MatchSnapshotStatus.Completed
                     && !_lastSnapshotPayload.IsLastSend
@@ -529,33 +509,34 @@ public sealed class MatchCoordinator : IDisposable
                 }
                 else
                 {
-                    if (IsTerminalStatus(matchRelayPayload.Status))
+                    if (IsTerminalStatus(localRelayPayload.Status))
                     {
                         var expectedWinner = GetExpectedWinner();
                         var isWinnerMismatch = !string.IsNullOrWhiteSpace(expectedWinner)
-                            && !string.Equals(matchRelayPayload.WinnerTeam, expectedWinner, StringComparison.Ordinal);
-                        var updatedStatus = matchRelayPayload.Status;
+                            && !string.Equals(localRelayPayload.WinnerTeam, expectedWinner, StringComparison.Ordinal);
+                        var updatedStatus = localRelayPayload.Status;
 
-                        if (expectedWinner is not null && matchRelayPayload.Status == MatchSnapshotStatus.WaitingOnFinalData)
+                        if (expectedWinner is not null && localRelayPayload.Status == MatchSnapshotStatus.WaitingOnFinalData)
                         {
                             updatedStatus = MatchSnapshotStatus.Completed;
                         }
 
-                        if (isWinnerMismatch || updatedStatus != matchRelayPayload.Status)
+                        if (isWinnerMismatch || updatedStatus != localRelayPayload.Status)
                         {
-                            matchRelayPayload = new MatchSnapshotDto
+                            localRelayPayload = new MatchSnapshotDto
                             {
-                                Id = matchRelayPayload.Id,
-                                Timestamp = matchRelayPayload.Timestamp,
-                                IsLastSend = matchRelayPayload.IsLastSend,
+                                Id = localRelayPayload.Id,
+                                Timestamp = localRelayPayload.Timestamp,
+                                IsLastSend = localRelayPayload.IsLastSend,
                                 Status = updatedStatus,
-                                RemainingTimeMs = matchRelayPayload.RemainingTimeMs,
-                                WinnerTeam = isWinnerMismatch ? expectedWinner : matchRelayPayload.WinnerTeam,
-                                Players = matchRelayPayload.Players
+                                RemainingTimeMs = localRelayPayload.RemainingTimeMs,
+                                WinnerTeam = isWinnerMismatch ? expectedWinner : localRelayPayload.WinnerTeam,
+                                Players = localRelayPayload.Players
                             };
                         }
                     }
 
+                    matchRelayPayload = localRelayPayload;
                     _ = _relayService.TryRelayMatchAsync(matchRelayPayload, CancellationToken.None);
                 }
             }
@@ -573,6 +554,29 @@ public sealed class MatchCoordinator : IDisposable
                 _ = _relayService.TryRelayPropAsync(propRelayPayload, CancellationToken.None);
             }
         }
+
+        var snapshot = new MatchStateSnapshot(
+            MatchId: _currentMatchId,
+            LifecycleState: _lifecycleState,
+            PropState: _propState,
+            PlantTimeSec: _plantTimeSec,
+            RemainingTimeMs: _lastMatchRemainingMs,
+            IsOvertime: overtimeActive,
+            OvertimeRemainingSec: overtimeRemaining,
+            PropTimerRemainingMs: propTimerRemainingMs,
+            PropTimerSyncedAt: _propTimerSyncedAt,
+            LastPropUpdate: _lastPropUpdate,
+            LastClockUpdate: _lastClockUpdate,
+            PropLatency: _propLatency,
+            ClockLatency: _clockLatency,
+            LastActionDescription: _lastActionDescription,
+            FocusAcquired: _focusAcquired,
+            Players: players,
+            TeamPlayerCounts: teamPlayerCounts,
+            LatestRelayPayload: matchRelayPayload);
+
+        CurrentSnapshot = snapshot;
+        SnapshotUpdated?.Invoke(this, snapshot);
 
         _logger.LogDebug("State updated via {Source}: {@Snapshot}", source, snapshot);
     }

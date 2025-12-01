@@ -23,11 +23,13 @@ public class MatchCoordinatorTests
 
         var focus = new FakeFocusService();
         var relay = new RelayService(Options.Create(new RelayOptions { Enabled = false }), NullLogger<RelayService>.Instance);
+        var timeSync = new TimeSynchronizationService(Options.Create(matchOptions), NullLogger<TimeSynchronizationService>.Instance);
         var coordinator = new MatchCoordinator(
             Options.Create(matchOptions),
             relay,
             focus,
             Options.Create(new UiAutomationOptions { DebounceWindowMs = 10 }),
+            timeSync,
             NullLogger<MatchCoordinator>.Instance);
 
         return (coordinator, focus);
