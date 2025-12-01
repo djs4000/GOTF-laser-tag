@@ -16,4 +16,6 @@ public sealed class MatchOptions
     public int PreflightExpectedMatchLengthSec { get; set; } = 219;
 
     public int PropSessionTimeoutSeconds { get; set; } = 15;
+
+    public int LatencyWindow { get; set; } = 10;
 }

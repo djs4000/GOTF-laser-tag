@@ -182,10 +182,13 @@ public class MatchCoordinatorTests
         };
 
         await coordinator.UpdateMatchSnapshotAsync(dto, CancellationToken.None);
-        var latency = coordinator.Snapshot().LastClockLatency;
+        var latency = coordinator.Snapshot().ClockLatency;
 
         Assert.NotNull(latency);
-        Assert.InRange(latency!.Value.TotalMilliseconds, 0, 5_000);
+        Assert.InRange(latency!.Average.TotalMilliseconds, 0, 5_000);
+        Assert.InRange(latency.Minimum.TotalMilliseconds, 0, 5_000);
+        Assert.InRange(latency.Maximum.TotalMilliseconds, 0, 5_000);
+        Assert.Equal(1, latency.SampleCount);
     }
 
     [Fact]
@@ -205,9 +208,12 @@ public class MatchCoordinatorTests
         };
 
         await coordinator.UpdateMatchSnapshotAsync(dto, CancellationToken.None);
-        var latency = coordinator.Snapshot().LastClockLatency;
+        var latency = coordinator.Snapshot().ClockLatency;
 
-        Assert.Equal(TimeSpan.Zero, latency);
+        Assert.NotNull(latency);
+        Assert.Equal(TimeSpan.Zero, latency!.Average);
+        Assert.Equal(TimeSpan.Zero, latency.Minimum);
+        Assert.Equal(TimeSpan.Zero, latency.Maximum);
     }
 
     [Fact]
@@ -219,10 +225,13 @@ public class MatchCoordinatorTests
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, propTimestamp), CancellationToken.None);
         await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = propTimestamp }, CancellationToken.None);
 
-        var latency = coordinator.Snapshot().LastPropLatency;
+        var latency = coordinator.Snapshot().PropLatency;
 
         Assert.NotNull(latency);
-        Assert.InRange(latency!.Value.TotalMilliseconds, 0, 5_000);
+        Assert.InRange(latency!.Average.TotalMilliseconds, 0, 5_000);
+        Assert.InRange(latency.Minimum.TotalMilliseconds, 0, 5_000);
+        Assert.InRange(latency.Maximum.TotalMilliseconds, 0, 5_000);
+        Assert.Equal(1, latency.SampleCount);
     }
 
     [Fact]
@@ -234,9 +243,12 @@ public class MatchCoordinatorTests
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, DateTimeOffset.UtcNow.ToUnixTimeSeconds()), CancellationToken.None);
         await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = futureTimestamp }, CancellationToken.None);
 
-        var latency = coordinator.Snapshot().LastPropLatency;
+        var latency = coordinator.Snapshot().PropLatency;
 
-        Assert.Equal(TimeSpan.Zero, latency);
+        Assert.NotNull(latency);
+        Assert.Equal(TimeSpan.Zero, latency!.Average);
+        Assert.Equal(TimeSpan.Zero, latency.Minimum);
+        Assert.Equal(TimeSpan.Zero, latency.Maximum);
     }
 
     [Fact]

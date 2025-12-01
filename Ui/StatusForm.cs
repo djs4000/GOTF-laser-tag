@@ -554,6 +554,16 @@ public sealed class StatusForm : Form
         return FormatTimeMs(snapshot.RemainingTimeMs);
     }
 
+    private static string FormatLatency(LatencySampleSnapshot? latency)
+    {
+        if (latency is null)
+        {
+            return "Latency —";
+        }
+
+        return $"Latency avg {latency.Average.TotalMilliseconds:F0} ms (min {latency.Minimum.TotalMilliseconds:F0} / max {latency.Maximum.TotalMilliseconds:F0}, n={latency.SampleCount})";
+    }
+
     private static string FormatPlayerCounts(IReadOnlyList<TeamPlayerCountSnapshot> counts)
     {
         if (counts.Count == 0)
@@ -723,15 +733,11 @@ public sealed class StatusForm : Form
             ? $"{snapshot.PlantTimeSec.Value:F1}s"
             : "—";
 
-        _matchLatencyLabel.Text = snapshot.LastClockLatency.HasValue
-            ? $"Latency {snapshot.LastClockLatency.Value.TotalMilliseconds:F0} ms"
-            : "Latency —";
+        _matchLatencyLabel.Text = FormatLatency(snapshot.ClockLatency);
 
         _playerCountsLabel.Text = FormatPlayerCounts(snapshot.TeamPlayerCounts);
 
-        _propLatencyLabel.Text = snapshot.LastPropLatency.HasValue
-            ? $"Latency {snapshot.LastPropLatency.Value.TotalMilliseconds:F0} ms"
-            : "Latency —";
+        _propLatencyLabel.Text = FormatLatency(snapshot.PropLatency);
 
         var propTimerRemainingSec = CalculatePropTimerRemainingSeconds(snapshot);
         if (propTimerRemainingSec is not null)

@@ -160,7 +160,8 @@ stateDiagram-v2
     "LtDisplayedDurationSec": 219,
     "AutoEndNoPlantAtSec": 180,
     "DefuseWindowSec": 40,
-    "ClockExpectedHz": 10
+    "ClockExpectedHz": 10,
+    "LatencyWindow": 10
   },
   "UiAutomation": {
     "ProcessName": "ICombat.Desktop",
