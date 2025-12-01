@@ -185,6 +185,11 @@ public sealed class StatusForm : Form
         _attackingTeamComboBox.DropDownStyle = ComboBoxStyle.DropDownList;
         _attackingTeamComboBox.Items.Clear();
         _attackingTeamComboBox.Items.AddRange(new object[] { "Team 1", "Team 2" });
+        _attackingTeamComboBox.SelectedIndexChanged += (_, _) =>
+        {
+            var selected = _attackingTeamComboBox.SelectedItem as string;
+            _coordinator.AttackingTeam = string.IsNullOrWhiteSpace(selected) ? "Team 1" : selected!;
+        };
         if (_attackingTeamComboBox.Items.Count > 0)
         {
             _attackingTeamComboBox.SelectedIndex = 0;
@@ -770,6 +775,8 @@ public sealed class StatusForm : Form
         UpdatePreflightChecks(snapshot);
 
         _actionLabel.Text = snapshot.LastActionDescription;
+
+        _attackingTeamComboBox.Enabled = snapshot.LifecycleState is not (MatchLifecycleState.Countdown or MatchLifecycleState.Running);
 
         if (snapshot.IsOvertime && snapshot.OvertimeRemainingSec is not null)
         {

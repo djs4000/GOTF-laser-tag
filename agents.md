@@ -92,6 +92,15 @@ The system uses a pragmatic ("hacky") trigger to integrate with a closed applica
 ### Relay (outbound)
 If enabled, the application forwards POSTs `{ match, prop, clock, fsm }` to the configured `RelayUrl`. Supports optional bearer token.
 
+### Winner Override Logic
+- The laser tag host remains authoritative for lifecycle transitions, but the coordinator recalculates the winner for downstream consumers when defusal rules produce a clear outcome.
+- On terminal snapshots (`WaitingOnFinalData`, `Completed`, `Cancelled`), the relay payload preserves the host-reported status and timing yet overwrites `winner_team` if defusal rules dictate:
+  - `detonated` → Attacking team wins.
+  - `defused` → Defending team wins.
+  - Bomb planted and the defuse window has elapsed → Attacking team wins (implicit detonation).
+  - No plant when auto-end threshold is reached → Defending team wins.
+- The status window exposes an “Attacking team” selector, which locks during live play. The defending team is inferred as the opposite side.
+
 ### Health
 - `GET /healthz` returns 200 when the service is running.
 

@@ -45,12 +45,42 @@ public sealed class MatchCoordinator
     private MatchSnapshotDto? _lastSnapshotPayload;
     private double? _propTimerRemainingMs;
     private DateTimeOffset? _propTimerSyncedAt;
+    private string _attackingTeam = "Team 1";
 
     public event EventHandler<MatchStateSnapshot>? SnapshotUpdated;
 
     public MatchStateSnapshot CurrentSnapshot { get; private set; } = MatchStateSnapshot.Default;
 
     public int? LastKnownRemainingTimeMs => _lastMatchRemainingMs;
+
+    public string AttackingTeam
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _attackingTeam;
+            }
+        }
+        set
+        {
+            lock (_sync)
+            {
+                _attackingTeam = string.Equals(value, "Team 2", StringComparison.OrdinalIgnoreCase) ? "Team 2" : "Team 1";
+            }
+        }
+    }
+
+    public string DefendingTeam
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return string.Equals(_attackingTeam, "Team 1", StringComparison.Ordinal) ? "Team 2" : "Team 1";
+            }
+        }
+    }
 
     public MatchCoordinator(
         IOptions<MatchOptions> matchOptions,
@@ -406,6 +436,34 @@ public sealed class MatchCoordinator
         }
     }
 
+    private string? GetExpectedWinner()
+    {
+        if (_propState == PropState.Detonated)
+        {
+            return AttackingTeam;
+        }
+
+        if (_propState == PropState.Defused)
+        {
+            return DefendingTeam;
+        }
+
+        if (_plantTimeSec is not null)
+        {
+            var defuseWindowElapsed = _lastElapsedSec >= _plantTimeSec.Value + _matchOptions.DefuseWindowSec;
+            if (defuseWindowElapsed)
+            {
+                return AttackingTeam;
+            }
+        }
+        else if (_lastElapsedSec >= _matchOptions.AutoEndNoPlantAtSec)
+        {
+            return DefendingTeam;
+        }
+
+        return null;
+    }
+
     private void PublishSnapshotLocked(string source)
     {
         var now = DateTimeOffset.UtcNow;
@@ -445,11 +503,33 @@ public sealed class MatchCoordinator
 
         if (_relayService.IsEnabled)
         {
+            var clockPayload = _lastSnapshotPayload;
+            if (clockPayload is not null && IsTerminalStatus(clockPayload.Status))
+            {
+                var expectedWinner = GetExpectedWinner();
+                var isWinnerMismatch = !string.IsNullOrWhiteSpace(expectedWinner)
+                    && !string.Equals(clockPayload.WinnerTeam, expectedWinner, StringComparison.Ordinal);
+
+                if (isWinnerMismatch)
+                {
+                    clockPayload = new MatchSnapshotDto
+                    {
+                        Id = clockPayload.Id,
+                        Timestamp = clockPayload.Timestamp,
+                        IsLastSend = clockPayload.IsLastSend,
+                        Status = clockPayload.Status,
+                        RemainingTimeMs = clockPayload.RemainingTimeMs,
+                        WinnerTeam = expectedWinner!,
+                        Players = clockPayload.Players
+                    };
+                }
+            }
+
             var relayPayload = new
             {
                 match = _currentMatchId,
                 prop = _lastPropPayload,
-                clock = _lastSnapshotPayload,
+                clock = clockPayload,
                 fsm = snapshot
             };
             _ = _relayService.TryRelayAsync(relayPayload, CancellationToken.None);
