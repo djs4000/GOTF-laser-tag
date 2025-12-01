@@ -17,6 +17,7 @@ public sealed class TimeSynchronizationService
     private bool _isSynced;
     private TimeSpan _timeOffset = TimeSpan.Zero;
     private DateTimeOffset _lastHeartbeat = DateTimeOffset.MinValue;
+    private long? _lastUptimeMs;
 
     public TimeSynchronizationService(IOptions<MatchOptions> options, ILogger<TimeSynchronizationService> logger)
     {
@@ -36,6 +37,12 @@ public sealed class TimeSynchronizationService
 
         lock (_sync)
         {
+            if (uptimeMs is not null && _lastUptimeMs is not null && uptimeMs.Value < _lastUptimeMs.Value)
+            {
+                _isSynced = false;
+                _logger.LogInformation("Prop uptime decreased from {Previous}ms to {Current}ms; invalidating time offset", _lastUptimeMs, uptimeMs);
+            }
+
             if (_isSynced && (now - _lastHeartbeat).TotalSeconds > _options.PropSessionTimeoutSeconds)
             {
                 _isSynced = false;
@@ -53,6 +60,11 @@ public sealed class TimeSynchronizationService
             }
 
             _lastHeartbeat = now;
+            if (uptimeMs is not null)
+            {
+                _lastUptimeMs = uptimeMs;
+            }
+
             var normalizedMs = inputTimeMs + (long)_timeOffset.TotalMilliseconds;
 
             try

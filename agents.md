@@ -192,6 +192,7 @@ stateDiagram-v2
 - App is the time authority. First prop packet establishes a fixed offset between app clock and prop uptime/timestamp.
 - All future prop timestamps are normalized using this cached offset (uptime_ms preferred over timestamp).
 - If no prop packet is received for 15 seconds (configurable via `Match:PropSessionTimeoutSeconds`), the session is invalidated and the next packet recalculates offset. Logged at Information level.
+- If the prop reports a lower `uptime_ms` than previously seen (e.g., reboot/power loss), the session is invalidated and re-synced on that packet. Logged at Information level.
 
 ---
 
