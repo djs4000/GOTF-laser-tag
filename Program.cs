@@ -99,11 +99,7 @@ internal static class Program
             return Results.Accepted();
         });
 
-        app.MapGet("/healthz", () => Results.Ok(new
-        {
-            status = "ok",
-            version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "dev"
-        }));
+        app.MapGet("/healthz", () => Results.Ok(new { status = "ok", version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "dev" }));
 
         var serverTask = app.RunAsync();
 
@@ -160,24 +156,36 @@ internal static class Program
         var activeAddresses = GetActiveUnicastAddresses();
         var validUrls = new List<string>();
 
-        foreach (var configuredUrl in configuredUrls.Where(u => !string.IsNullOrWhiteSpace(u)))
+        foreach (var url in configuredUrls.Where(u => !string.IsNullOrWhiteSpace(u)))
         {
-            if (!Uri.TryCreate(configuredUrl, UriKind.Absolute, out var uri) || string.IsNullOrWhiteSpace(uri.Host))
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || string.IsNullOrWhiteSpace(uri.Host))
             {
-                Console.WriteLine($"[config] Ignoring invalid HTTP Url '{configuredUrl}'.");
+                Console.WriteLine($"[config] Ignoring invalid HTTP Url '{url}'.");
+                continue;
+            }
+
+            var isWildcard = uri.Host is "*" or "+" or "0.0.0.0";
+            if (isWildcard)
+            {
+                validUrls.Add(url);
                 continue;
             }
 
             if (IPAddress.TryParse(uri.Host, out var ipAddress))
             {
-                if (!IsBindable(ipAddress, activeAddresses))
+                if (IsBindable(ipAddress, activeAddresses))
                 {
-                    Console.WriteLine($"[config] Skipping HTTP Url '{configuredUrl}' because {ipAddress} is not assigned to this machine.");
-                    continue;
+                    validUrls.Add(url);
+                }
+                else
+                {
+                    Console.WriteLine($"[config] Skipping HTTP Url '{url}' because IP address '{ipAddress}' is not active on this machine.");
                 }
             }
-
-            validUrls.Add(configuredUrl);
+            else
+            {
+                validUrls.Add(url); // Assume hostname is valid and let Kestrel handle resolution.
+            }
         }
 
         if (validUrls.Count == 0)

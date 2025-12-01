@@ -15,7 +15,12 @@ public sealed class MatchOptions
 
     public int PreflightExpectedMatchLengthSec { get; set; } = 219;
 
-    public int PropSessionTimeoutSeconds { get; set; } = 15;
-
+    /// <summary>
+    /// Number of samples to include in the latency calculation window.
+    /// </summary>
     public int LatencyWindow { get; set; } = 10;
+    /// <summary>
+    /// If no prop heartbeat is received within this window, the time offset is invalidated.
+    /// </summary>
+    public int PropSessionTimeoutSeconds { get; set; } = 10;
 }

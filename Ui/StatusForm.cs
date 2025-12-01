@@ -27,6 +27,7 @@ public sealed class StatusForm : Form
     private readonly System.Windows.Forms.Timer _debugGameTimer;
     private MatchStateSnapshot _snapshot = MatchStateSnapshot.Default;
     private FocusWindowInfo _focusWindowInfo = FocusWindowInfo.Empty;
+    private MatchStateSnapshot? _lastRenderedSnapshot;
 
     private readonly Label _matchLabel = new();
     private readonly Label _httpLabel = new();
@@ -352,6 +353,7 @@ public sealed class StatusForm : Form
     private void OnSnapshotUpdated(object? sender, MatchStateSnapshot snapshot)
     {
         _snapshot = snapshot;
+        _lastRenderedSnapshot = null; // Force a full re-render on next tick
         if (IsHandleCreated)
         {
             BeginInvoke(RenderSnapshot);
@@ -712,6 +714,13 @@ public sealed class StatusForm : Form
         }
 
         var snapshot = _snapshot;
+
+        if (ReferenceEquals(snapshot, _lastRenderedSnapshot))
+        {
+            UpdateLiveTimers(snapshot);
+            return;
+        }
+
         _matchLabel.Text = snapshot.MatchId ?? "—";
         var hasMatchData = snapshot.MatchId is not null
             || snapshot.LastClockUpdate is not null
@@ -752,6 +761,7 @@ public sealed class StatusForm : Form
         {
             _defuseTimerLabel.Text = "—";
         }
+        UpdateLiveTimers(snapshot);
 
         _matchTimerLabel.Text = FormatMatchTimer(snapshot);
 
@@ -771,6 +781,30 @@ public sealed class StatusForm : Form
             _overtimeLabel.Visible = false;
             _overtimeLabel.Text = "OVERTIME";
         }
+
+        _lastRenderedSnapshot = snapshot;
+    }
+
+    private void UpdateLiveTimers(MatchStateSnapshot snapshot)
+    {
+        var propTimerRemainingSec = CalculatePropTimerRemainingSeconds(snapshot);
+        if (propTimerRemainingSec is not null)
+        {
+            _defuseTimerLabel.Text = $"{propTimerRemainingSec.Value:F1}s";
+        }
+        else if (snapshot.IsOvertime && snapshot.OvertimeRemainingSec is not null)
+        {
+            _defuseTimerLabel.Text = $"{Math.Max(0, snapshot.OvertimeRemainingSec.Value):F1}s";
+        }
+        else
+        {
+            _defuseTimerLabel.Text = "—";
+        }
+
+        _matchTimerLabel.Text = FormatMatchTimer(snapshot);
+
+        _overtimeLabel.Visible = snapshot.IsOvertime && snapshot.OvertimeRemainingSec is not null;
+        _overtimeLabel.Text = snapshot.IsOvertime && snapshot.OvertimeRemainingSec is not null ? $"OVERTIME {Math.Max(0, snapshot.OvertimeRemainingSec.Value):F1}s" : "OVERTIME";
     }
 
     protected override void OnHandleCreated(EventArgs e)
