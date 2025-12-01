@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using LaserTag.Defusal.Domain;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -15,6 +16,7 @@ public sealed class RelayService
     private readonly HttpClient _httpClient;
     private readonly ILogger<RelayService> _logger;
     private readonly RelayOptions _options;
+    private readonly JsonSerializerOptions _serializerOptions;
 
     public RelayService(IOptions<RelayOptions> options, ILogger<RelayService> logger)
     {
@@ -24,26 +26,48 @@ public sealed class RelayService
         {
             Timeout = TimeSpan.FromSeconds(5)
         };
+
+        _serializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        _serializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false));
     }
 
-    public bool IsEnabled => _options.Enabled && !string.IsNullOrWhiteSpace(_options.Url);
+    public bool IsEnabled => _options.Enabled && (CanRelayMatch || CanRelayProp);
 
-    public async Task TryRelayAsync(object payload, CancellationToken cancellationToken)
+    public bool CanRelayMatch => !string.IsNullOrWhiteSpace(_options.MatchUrl ?? _options.Url);
+
+    public bool CanRelayProp => !string.IsNullOrWhiteSpace(_options.PropUrl ?? _options.Url);
+
+    public Task TryRelayAsync(object payload, CancellationToken cancellationToken)
     {
-        if (!IsEnabled)
+        return TryRelayMatchAsync(payload, cancellationToken);
+    }
+
+    public async Task TryRelayMatchAsync(object payload, CancellationToken cancellationToken)
+    {
+        await RelayToUrlAsync(_options.MatchUrl ?? _options.Url, payload, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task TryRelayPropAsync(object payload, CancellationToken cancellationToken)
+    {
+        await RelayToUrlAsync(_options.PropUrl ?? _options.Url, payload, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task RelayToUrlAsync(string? url, object payload, CancellationToken cancellationToken)
+    {
+        if (!IsEnabled || string.IsNullOrWhiteSpace(url))
         {
             return;
         }
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, _options.Url);
+            using var request = new HttpRequestMessage(HttpMethod.Post, url);
             if (!string.IsNullOrWhiteSpace(_options.BearerToken))
             {
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.BearerToken);
             }
 
-            var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var json = JsonSerializer.Serialize(payload, _serializerOptions);
             request.Content = new StringContent(json, Encoding.UTF8, "application/json");
 
             var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
