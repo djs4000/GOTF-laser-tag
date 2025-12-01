@@ -223,6 +223,8 @@ stateDiagram-v2
 - **Allowlist → Configurable CIDRs**
 - **UI → Show OVERTIME badge + countdown**
 - **Automation defaults are tunable (focus timeout, post-shortcut delay, debounce window)**
+- **Buffered Relay Strategy**: When the LT host sends multiple `Completed` snapshots, only the final one marked `is_last_send: true` is relayed immediately. Earlier `Completed` snapshots are buffered for up to `Match:FinalDataTimeoutMs` (default 2000 ms) to avoid leaking incomplete results. The local UI still updates as soon as the `Completed` status is seen.
+- **Winner Override**: The downstream relay uses the coordinator’s winner override on the final relayed payload to enforce defusal logic outcomes.
 
 ---
 ## Folder Layout
