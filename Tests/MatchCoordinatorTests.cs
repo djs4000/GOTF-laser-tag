@@ -168,7 +168,15 @@ public class MatchCoordinatorTests
     [Fact]
     public async Task ParsesUnixSecondTimestampsForLatency()
     {
-        var (coordinator, _) = CreateCoordinator();
+        var options = new MatchOptions
+        {
+            LtDisplayedDurationSec = 400,
+            AutoEndNoPlantAtSec = 180,
+            DefuseWindowSec = 40,
+            ClockExpectedHz = 10,
+            LatencyWindow = 1
+        };
+        var (coordinator, _) = CreateCoordinator(options);
         var unixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var dto = new MatchSnapshotDto
         {
@@ -194,7 +202,15 @@ public class MatchCoordinatorTests
     [Fact]
     public async Task FutureClockTimestampsClampToZeroLatency()
     {
-        var (coordinator, _) = CreateCoordinator();
+        var options = new MatchOptions
+        {
+            LtDisplayedDurationSec = 400,
+            AutoEndNoPlantAtSec = 180,
+            DefuseWindowSec = 40,
+            ClockExpectedHz = 10,
+            LatencyWindow = 1
+        };
+        var (coordinator, _) = CreateCoordinator(options);
         var futureTimestamp = DateTimeOffset.UtcNow.AddSeconds(2).ToUnixTimeMilliseconds();
         var dto = new MatchSnapshotDto
         {
@@ -219,7 +235,15 @@ public class MatchCoordinatorTests
     [Fact]
     public async Task ComputesPropLatencyFromUnixSeconds()
     {
-        var (coordinator, _) = CreateCoordinator();
+        var options = new MatchOptions
+        {
+            LtDisplayedDurationSec = 400,
+            AutoEndNoPlantAtSec = 180,
+            DefuseWindowSec = 40,
+            ClockExpectedHz = 10,
+            LatencyWindow = 1
+        };
+        var (coordinator, _) = CreateCoordinator(options);
         var propTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, propTimestamp), CancellationToken.None);
@@ -237,7 +261,15 @@ public class MatchCoordinatorTests
     [Fact]
     public async Task FuturePropTimestampsClampToZeroLatency()
     {
-        var (coordinator, _) = CreateCoordinator();
+        var options = new MatchOptions
+        {
+            LtDisplayedDurationSec = 400,
+            AutoEndNoPlantAtSec = 180,
+            DefuseWindowSec = 40,
+            ClockExpectedHz = 10,
+            LatencyWindow = 1
+        };
+        var (coordinator, _) = CreateCoordinator(options);
         var futureTimestamp = DateTimeOffset.UtcNow.AddSeconds(2).ToUnixTimeMilliseconds();
 
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, DateTimeOffset.UtcNow.ToUnixTimeSeconds()), CancellationToken.None);
@@ -249,6 +281,34 @@ public class MatchCoordinatorTests
         Assert.Equal(TimeSpan.Zero, latency!.Average);
         Assert.Equal(TimeSpan.Zero, latency.Minimum);
         Assert.Equal(TimeSpan.Zero, latency.Maximum);
+    }
+
+    [Fact]
+    public async Task LatencySnapshotsPublishWhenWindowCompletes()
+    {
+        var options = new MatchOptions
+        {
+            LtDisplayedDurationSec = 400,
+            AutoEndNoPlantAtSec = 180,
+            DefuseWindowSec = 40,
+            ClockExpectedHz = 10,
+            LatencyWindow = 3
+        };
+        var (coordinator, _) = CreateCoordinator(options);
+
+        var baseTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, baseTimestamp), CancellationToken.None);
+        Assert.Null(coordinator.Snapshot().ClockLatency);
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 199_000, baseTimestamp + 1), CancellationToken.None);
+        Assert.Null(coordinator.Snapshot().ClockLatency);
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 198_000, baseTimestamp + 2), CancellationToken.None);
+        var latency = coordinator.Snapshot().ClockLatency;
+
+        Assert.NotNull(latency);
+        Assert.Equal(3, latency!.SampleCount);
     }
 
     [Fact]

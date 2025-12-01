@@ -561,7 +561,7 @@ public sealed class StatusForm : Form
             return "Latency —";
         }
 
-        return $"Latency avg {latency.Average.TotalMilliseconds:F0} ms (min {latency.Minimum.TotalMilliseconds:F0} / max {latency.Maximum.TotalMilliseconds:F0}, n={latency.SampleCount})";
+        return $"Latency avg {latency.Average.TotalMilliseconds:F0} ms (min {latency.Minimum.TotalMilliseconds:F0} / max {latency.Maximum.TotalMilliseconds:F0})";
     }
 
     private static string FormatPlayerCounts(IReadOnlyList<TeamPlayerCountSnapshot> counts)
