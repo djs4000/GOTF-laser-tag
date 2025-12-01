@@ -92,6 +92,11 @@ The system uses a pragmatic ("hacky") trigger to integrate with a closed applica
 ### Relay (outbound)
 If enabled, the application forwards POSTs `{ match, prop, clock, fsm }` to the configured `RelayUrl`. Supports optional bearer token.
 
+### Relay Destinations
+- **Match endpoint**: Receives `{ match, prop, clock, fsm }` payloads (including winner overrides on terminal snapshots).
+- **Prop endpoint**: Receives `{ match, prop, fsm }` payloads for prop-specific consumers.
+- Both endpoints reuse the same bearer token. `Relay:MatchUrl` and `Relay:PropUrl` can be configured independently; `Relay:Url` remains as a backward-compatible default when specific URLs are not provided.
+
 ### Winner Override Logic
 - The laser tag host remains authoritative for lifecycle transitions, but the coordinator recalculates the winner for downstream consumers when defusal rules produce a clear outcome.
 - On terminal snapshots (`WaitingOnFinalData`, `Completed`, `Cancelled`), the relay payload preserves the host-reported status and timing yet overwrites `winner_team` if defusal rules dictate:

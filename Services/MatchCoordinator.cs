@@ -525,14 +525,30 @@ public sealed class MatchCoordinator
                 }
             }
 
-            var relayPayload = new
+            if (_relayService.CanRelayMatch)
             {
-                match = _currentMatchId,
-                prop = _lastPropPayload,
-                clock = clockPayload,
-                fsm = snapshot
-            };
-            _ = _relayService.TryRelayAsync(relayPayload, CancellationToken.None);
+                var matchRelayPayload = new
+                {
+                    match = _currentMatchId,
+                    prop = _lastPropPayload,
+                    clock = clockPayload,
+                    fsm = snapshot
+                };
+
+                _ = _relayService.TryRelayMatchAsync(matchRelayPayload, CancellationToken.None);
+            }
+
+            if (_relayService.CanRelayProp && _lastPropPayload is not null)
+            {
+                var propRelayPayload = new
+                {
+                    match = _currentMatchId,
+                    prop = _lastPropPayload,
+                    fsm = snapshot
+                };
+
+                _ = _relayService.TryRelayPropAsync(propRelayPayload, CancellationToken.None);
+            }
         }
 
         _logger.LogDebug("State updated via {Source}: {@Snapshot}", source, snapshot);
