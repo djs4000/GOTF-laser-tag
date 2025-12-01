@@ -18,6 +18,7 @@ public sealed class MatchCoordinator
     private readonly RelayService _relayService;
     private readonly IFocusService _focusService;
     private readonly UiAutomationOptions _uiAutomationOptions;
+    private readonly TimeSynchronizationService _timeSyncService;
     private readonly object _sync = new();
 
     private MatchLifecycleState _lifecycleState = MatchLifecycleState.Idle;
@@ -31,8 +32,12 @@ public sealed class MatchCoordinator
     private double _lastElapsedSec;
     private DateTimeOffset? _lastClockUpdate;
     private DateTimeOffset? _lastPropUpdate;
-    private TimeSpan? _lastPropLatency;
-    private TimeSpan? _lastClockLatency;
+    private readonly Queue<TimeSpan> _propLatencyWindow = new();
+    private readonly Queue<TimeSpan> _clockLatencyWindow = new();
+    private int _propLatencySamplesUntilPublish;
+    private int _clockLatencySamplesUntilPublish;
+    private LatencySampleSnapshot? _propLatency;
+    private LatencySampleSnapshot? _clockLatency;
     private string _lastActionDescription = "Idle";
     private bool _focusAcquired;
     private DateTimeOffset _lastAutomationAt = DateTimeOffset.MinValue;
@@ -52,11 +57,13 @@ public sealed class MatchCoordinator
         RelayService relayService,
         IFocusService focusService,
         IOptions<UiAutomationOptions> uiAutomationOptions,
+        TimeSynchronizationService timeSyncService,
         ILogger<MatchCoordinator> logger)
     {
         _relayService = relayService;
         _focusService = focusService;
         _uiAutomationOptions = uiAutomationOptions.Value;
+        _timeSyncService = timeSyncService;
         _logger = logger;
         _matchOptions = matchOptions.Value;
     }
@@ -69,27 +76,33 @@ public sealed class MatchCoordinator
         bool shouldTriggerEnd = false;
         string? triggerReason = null;
         PropState incomingState;
+        var normalizedTime = _timeSyncService.NormalizePropTime(dto.Timestamp, dto.UptimeMs);
+        var normalizedTimestampMs = normalizedTime.ToUnixTimeMilliseconds();
 
         lock (_sync)
         {
             var now = DateTimeOffset.UtcNow;
-            var sourceTimestamp = ParseSnapshotTimestamp(dto.Timestamp, now);
-            var observedLatency = now - sourceTimestamp;
-            _lastPropLatency = observedLatency < TimeSpan.Zero ? TimeSpan.Zero : observedLatency;
+            var observedLatency = now - normalizedTime;
+            var clampedLatency = observedLatency < TimeSpan.Zero ? TimeSpan.Zero : observedLatency;
+            var updatedLatency = UpdateLatencyMetrics(_propLatencyWindow, clampedLatency, ref _propLatencySamplesUntilPublish);
+            if (updatedLatency is not null)
+            {
+                _propLatency = updatedLatency;
+            }
 
             if (_matchEnded && IsTerminalState(_lifecycleState))
             {
                 return CurrentSnapshot;
             }
 
-            if (dto.Timestamp < _lastPropTimestamp)
+            if (normalizedTimestampMs < _lastPropTimestamp)
             {
-                _logger.LogWarning("Out-of-order prop payload ignored (timestamp {Timestamp})", dto.Timestamp);
+                _logger.LogWarning("Out-of-order prop payload ignored (timestamp {Timestamp})", normalizedTimestampMs);
                 return CurrentSnapshot;
             }
 
             incomingState = dto.State;
-            _lastPropTimestamp = dto.Timestamp;
+            _lastPropTimestamp = normalizedTimestampMs;
             _lastPropUpdate = now;
             _lastPropPayload = dto;
             _propState = incomingState;
@@ -97,7 +110,7 @@ public sealed class MatchCoordinator
             if (dto.TimerMs is not null)
             {
                 _propTimerRemainingMs = Math.Max(0, dto.TimerMs.Value);
-                _propTimerSyncedAt = now;
+                _propTimerSyncedAt = normalizedTime;
             }
 
             if (_lifecycleState is MatchLifecycleState.Idle or MatchLifecycleState.WaitingOnStart or MatchLifecycleState.Countdown)
@@ -170,7 +183,12 @@ public sealed class MatchCoordinator
             var now = DateTimeOffset.UtcNow;
             var sourceTimestamp = ParseSnapshotTimestamp(dto.Timestamp, now);
             var observedLatency = now - sourceTimestamp;
-            _lastClockLatency = observedLatency < TimeSpan.Zero ? TimeSpan.Zero : observedLatency;
+            var clampedLatency = observedLatency < TimeSpan.Zero ? TimeSpan.Zero : observedLatency;
+            var updatedLatency = UpdateLatencyMetrics(_clockLatencyWindow, clampedLatency, ref _clockLatencySamplesUntilPublish);
+            if (updatedLatency is not null)
+            {
+                _clockLatency = updatedLatency;
+            }
 
             if (string.IsNullOrWhiteSpace(dto.Id))
             {
@@ -329,8 +347,12 @@ public sealed class MatchCoordinator
             _lastMatchRemainingMs = null;
             _lastClockUpdate = null;
             _lastPropUpdate = null;
-            _lastPropLatency = null;
-            _lastClockLatency = null;
+            _propLatencyWindow.Clear();
+            _clockLatencyWindow.Clear();
+            _propLatencySamplesUntilPublish = 0;
+            _clockLatencySamplesUntilPublish = 0;
+            _propLatency = null;
+            _clockLatency = null;
             _lastActionDescription = "Idle (no match data)";
             _focusAcquired = false;
             _lastPropPayload = null;
@@ -411,8 +433,8 @@ public sealed class MatchCoordinator
             PropTimerSyncedAt: _propTimerSyncedAt,
             LastPropUpdate: _lastPropUpdate,
             LastClockUpdate: _lastClockUpdate,
-            LastPropLatency: _lastPropLatency,
-            LastClockLatency: _lastClockLatency,
+            PropLatency: _propLatency,
+            ClockLatency: _clockLatency,
             LastActionDescription: _lastActionDescription,
             FocusAcquired: _focusAcquired,
             Players: players,
@@ -503,8 +525,12 @@ public sealed class MatchCoordinator
         _focusAcquired = false;
         _lastPropPayload = null;
         _lastSnapshotPayload = null;
-        _lastPropLatency = null;
-        _lastClockLatency = null;
+        _propLatencyWindow.Clear();
+        _clockLatencyWindow.Clear();
+        _propLatencySamplesUntilPublish = 0;
+        _clockLatencySamplesUntilPublish = 0;
+        _propLatency = null;
+        _clockLatency = null;
         _propTimerRemainingMs = null;
         _propTimerSyncedAt = null;
     }
@@ -579,5 +605,31 @@ public sealed class MatchCoordinator
     private static bool IsTerminalStatus(MatchSnapshotStatus status)
     {
         return status is MatchSnapshotStatus.WaitingOnFinalData or MatchSnapshotStatus.Completed or MatchSnapshotStatus.Cancelled;
+    }
+
+    private LatencySampleSnapshot? UpdateLatencyMetrics(Queue<TimeSpan> samples, TimeSpan sample, ref int samplesUntilPublish)
+    {
+        samples.Enqueue(sample);
+
+        var windowSize = Math.Max(1, _matchOptions.LatencyWindow);
+        while (samples.Count > windowSize)
+        {
+            samples.Dequeue();
+        }
+
+        samplesUntilPublish++;
+        if (samplesUntilPublish < windowSize)
+        {
+            return null;
+        }
+
+        samplesUntilPublish = 0;
+
+        var min = samples.Min();
+        var max = samples.Max();
+        var averageMs = samples.Average(value => value.TotalMilliseconds);
+        var average = TimeSpan.FromMilliseconds(averageMs);
+
+        return new LatencySampleSnapshot(Average: average, Minimum: min, Maximum: max, SampleCount: samples.Count);
     }
 }
