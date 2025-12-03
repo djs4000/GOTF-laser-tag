@@ -518,21 +518,47 @@ public sealed class MatchCoordinator : IDisposable
         MatchSnapshotDto? matchRelayPayload = null;
         var awaitingFinalData = false;
 
+        var relayCandidate = _lastSnapshotPayload is not null
+            ? _matchEnded && !IsTerminalStatus(_lastSnapshotPayload.Status)
+                ? BuildLocalTerminalSnapshotLocked()
+                : _lastSnapshotPayload
+            : _matchEnded
+                ? BuildLocalTerminalSnapshotLocked()
+                : null;
+
+        if (relayCandidate is not null && IsTerminalStatus(relayCandidate.Status))
+        {
+            var expectedWinner = GetExpectedWinner();
+            var isWinnerMismatch = !string.IsNullOrWhiteSpace(expectedWinner)
+                && !string.Equals(relayCandidate.WinnerTeam, expectedWinner, StringComparison.Ordinal);
+            var updatedStatus = relayCandidate.Status;
+
+            if (expectedWinner is not null && relayCandidate.Status == MatchSnapshotStatus.WaitingOnFinalData)
+            {
+                updatedStatus = MatchSnapshotStatus.Completed;
+            }
+
+            if (isWinnerMismatch || updatedStatus != relayCandidate.Status)
+            {
+                relayCandidate = new MatchSnapshotDto
+                {
+                    Id = relayCandidate.Id,
+                    Timestamp = relayCandidate.Timestamp,
+                    IsLastSend = relayCandidate.IsLastSend,
+                    Status = updatedStatus,
+                    RemainingTimeMs = relayCandidate.RemainingTimeMs,
+                    WinnerTeam = isWinnerMismatch ? expectedWinner : relayCandidate.WinnerTeam,
+                    Players = relayCandidate.Players
+                };
+            }
+        }
+
         if (_relayService.IsEnabled)
         {
-            if (_relayService.CanRelayMatch && _lastSnapshotPayload is not null)
+            if (_relayService.CanRelayMatch && relayCandidate is not null)
             {
-                var localRelayPayload = _matchEnded && !IsTerminalStatus(_lastSnapshotPayload.Status)
-                    ? BuildLocalTerminalSnapshotLocked()
-                    : _lastSnapshotPayload;
-
-                if (localRelayPayload is null)
-                {
-                    goto RelayProp;
-                }
-
-                var shouldHoldFinalData = _lastSnapshotPayload.Status == MatchSnapshotStatus.Completed
-                    && !_lastSnapshotPayload.IsLastSend
+                var shouldHoldFinalData = relayCandidate.Status == MatchSnapshotStatus.Completed
+                    && !relayCandidate.IsLastSend
                     && !forceRelay;
 
                 if (shouldHoldFinalData)
@@ -542,39 +568,11 @@ public sealed class MatchCoordinator : IDisposable
                 }
                 else
                 {
-                    if (IsTerminalStatus(localRelayPayload.Status))
-                    {
-                        var expectedWinner = GetExpectedWinner();
-                        var isWinnerMismatch = !string.IsNullOrWhiteSpace(expectedWinner)
-                            && !string.Equals(localRelayPayload.WinnerTeam, expectedWinner, StringComparison.Ordinal);
-                        var updatedStatus = localRelayPayload.Status;
-
-                        if (expectedWinner is not null && localRelayPayload.Status == MatchSnapshotStatus.WaitingOnFinalData)
-                        {
-                            updatedStatus = MatchSnapshotStatus.Completed;
-                        }
-
-                        if (isWinnerMismatch || updatedStatus != localRelayPayload.Status)
-                        {
-                            localRelayPayload = new MatchSnapshotDto
-                            {
-                                Id = localRelayPayload.Id,
-                                Timestamp = localRelayPayload.Timestamp,
-                                IsLastSend = localRelayPayload.IsLastSend,
-                                Status = updatedStatus,
-                                RemainingTimeMs = localRelayPayload.RemainingTimeMs,
-                                WinnerTeam = isWinnerMismatch ? expectedWinner : localRelayPayload.WinnerTeam,
-                                Players = localRelayPayload.Players
-                            };
-                        }
-                    }
-
-                    matchRelayPayload = localRelayPayload;
-                    _ = _relayService.TryRelayMatchAsync(matchRelayPayload, CancellationToken.None);
+                    matchRelayPayload = relayCandidate;
+                    _ = _relayService.TryRelayMatchAsync(relayCandidate, CancellationToken.None);
                 }
             }
-
-            if (_relayService.CanRelayMatch && matchRelayPayload is null && _matchEnded && !awaitingFinalData)
+            else if (_relayService.CanRelayMatch && relayCandidate is null && _matchEnded && !awaitingFinalData)
             {
                 matchRelayPayload = BuildLocalTerminalSnapshotLocked();
                 if (matchRelayPayload is not null)
@@ -597,6 +595,8 @@ public sealed class MatchCoordinator : IDisposable
                 _ = _relayService.TryRelayPropAsync(propRelayPayload, CancellationToken.None);
             }
         }
+
+        matchRelayPayload ??= relayCandidate;
 
         var snapshot = new MatchStateSnapshot(
             MatchId: _currentMatchId,
