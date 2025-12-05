@@ -526,19 +526,24 @@ public sealed class MatchCoordinator : IDisposable
                 ? BuildLocalTerminalSnapshotLocked()
                 : null;
 
-        MatchSnapshotDto? matchRelayPayload = null;
         PropStatusDto? propRelayPayload = null;
 
-        if (_relayService.IsEnabled)
+        if (_relayService.IsEnabled && relayCandidate is not null)
         {
             var expectedWinner = GetExpectedWinner();
             var isWinnerMismatch = !string.IsNullOrWhiteSpace(expectedWinner)
                 && !string.Equals(relayCandidate.WinnerTeam, expectedWinner, StringComparison.Ordinal);
-            var updatedStatus = relayCandidate.Status;
 
             if (expectedWinner is not null && relayCandidate.Status == MatchSnapshotStatus.WaitingOnFinalData)
             {
-                matchRelayPayload = _lastSnapshotPayload;
+                awaitingFinalData = true;
+                relayCandidate = relayCandidate with { WinnerTeam = expectedWinner };
+            }
+            else if (isWinnerMismatch)
+            {
+                relayCandidate = relayCandidate with { WinnerTeam = expectedWinner };
+            }
+        }
 
         if (_relayService.IsEnabled)
         {
