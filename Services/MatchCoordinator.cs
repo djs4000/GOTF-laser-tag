@@ -165,7 +165,7 @@ public sealed class MatchCoordinator : IDisposable
             {
                 shouldTriggerEnd = true;
                 triggerReason = incomingState == PropState.Defused ? "Prop defused" : "Prop detonated";
-                _matchEnded = true;
+                MarkMatchEndedLocked(triggerReason);
             }
 
             PublishSnapshotLocked("Prop update");
@@ -254,8 +254,9 @@ public sealed class MatchCoordinator : IDisposable
                 ResetForNewMatch(dto.Id);
             }
 
-            if (_matchEnded && IsTerminalState(_lifecycleState) && !IsTerminalStatus(dto.Status))
+            if (_matchEnded && IsTerminalState(_lifecycleState) && dto.Status == MatchSnapshotStatus.Running)
             {
+                _logger.LogDebug("Ignoring running snapshot while match is ended ({LifecycleState})", _lifecycleState);
                 return CurrentSnapshot;
             }
 
@@ -410,6 +411,12 @@ public sealed class MatchCoordinator : IDisposable
     /// </summary>
     public Task ForceEndMatchAsync(string reason, CancellationToken cancellationToken)
     {
+        lock (_sync)
+        {
+            MarkMatchEndedLocked(reason);
+            PublishSnapshotLocked("Manual end");
+        }
+
         return TriggerEndMatchAsync(reason, cancellationToken);
     }
 
@@ -424,7 +431,7 @@ public sealed class MatchCoordinator : IDisposable
         {
             shouldTriggerEnd = true;
             triggerReason = _propState == PropState.Defused ? "Prop defused" : "Prop detonated";
-            _matchEnded = true;
+            MarkMatchEndedLocked(triggerReason);
             return;
         }
 
@@ -432,7 +439,7 @@ public sealed class MatchCoordinator : IDisposable
         {
             shouldTriggerEnd = true;
             triggerReason = $"No plant by {_matchOptions.AutoEndNoPlantAtSec}s";
-            _matchEnded = true;
+            MarkMatchEndedLocked(triggerReason);
             return;
         }
 
@@ -443,9 +450,26 @@ public sealed class MatchCoordinator : IDisposable
             {
                 shouldTriggerEnd = true;
                 triggerReason = "Bomb overtime expired";
-                _matchEnded = true;
+                MarkMatchEndedLocked(triggerReason);
             }
         }
+    }
+
+    private void MarkMatchEndedLocked(string reason)
+    {
+        _matchEnded = true;
+
+        if (!IsTerminalState(_lifecycleState))
+        {
+            _lifecycleState = MatchLifecycleState.WaitingOnFinalData;
+        }
+
+        if (_lastMatchRemainingMs is null)
+        {
+            _lastMatchRemainingMs = 0;
+        }
+
+        _lastActionDescription = $"Ended: {reason}";
     }
 
     private string? GetExpectedWinner()
@@ -491,6 +515,89 @@ public sealed class MatchCoordinator : IDisposable
         var players = _lastSnapshotPayload?.Players ?? Array.Empty<MatchPlayerSnapshotDto>();
         var teamPlayerCounts = BuildTeamPlayerCounts(players);
 
+        MatchSnapshotDto? matchRelayPayload = null;
+        var awaitingFinalData = false;
+
+        var relayCandidate = _lastSnapshotPayload is not null
+            ? _matchEnded && !IsTerminalStatus(_lastSnapshotPayload.Status)
+                ? BuildLocalTerminalSnapshotLocked()
+                : _lastSnapshotPayload
+            : _matchEnded
+                ? BuildLocalTerminalSnapshotLocked()
+                : null;
+
+        if (relayCandidate is not null && IsTerminalStatus(relayCandidate.Status))
+        {
+            var expectedWinner = GetExpectedWinner();
+            var isWinnerMismatch = !string.IsNullOrWhiteSpace(expectedWinner)
+                && !string.Equals(relayCandidate.WinnerTeam, expectedWinner, StringComparison.Ordinal);
+            var updatedStatus = relayCandidate.Status;
+
+            if (expectedWinner is not null && relayCandidate.Status == MatchSnapshotStatus.WaitingOnFinalData)
+            {
+                updatedStatus = MatchSnapshotStatus.Completed;
+            }
+
+            if (isWinnerMismatch || updatedStatus != relayCandidate.Status)
+            {
+                relayCandidate = new MatchSnapshotDto
+                {
+                    Id = relayCandidate.Id,
+                    Timestamp = relayCandidate.Timestamp,
+                    IsLastSend = relayCandidate.IsLastSend,
+                    Status = updatedStatus,
+                    RemainingTimeMs = relayCandidate.RemainingTimeMs,
+                    WinnerTeam = isWinnerMismatch ? expectedWinner : relayCandidate.WinnerTeam,
+                    Players = relayCandidate.Players
+                };
+            }
+        }
+
+        if (_relayService.IsEnabled)
+        {
+            if (_relayService.CanRelayMatch && relayCandidate is not null)
+            {
+                var shouldHoldFinalData = relayCandidate.Status == MatchSnapshotStatus.Completed
+                    && !relayCandidate.IsLastSend
+                    && !forceRelay;
+
+                if (shouldHoldFinalData)
+                {
+                    _logger.LogDebug("Buffering relay waiting for final data");
+                    awaitingFinalData = true;
+                }
+                else
+                {
+                    matchRelayPayload = relayCandidate;
+                    _ = _relayService.TryRelayMatchAsync(relayCandidate, CancellationToken.None);
+                }
+            }
+            else if (_relayService.CanRelayMatch && relayCandidate is null && _matchEnded && !awaitingFinalData)
+            {
+                matchRelayPayload = BuildLocalTerminalSnapshotLocked();
+                if (matchRelayPayload is not null)
+                {
+                    _ = _relayService.TryRelayMatchAsync(matchRelayPayload, CancellationToken.None);
+                }
+            }
+
+        RelayProp:
+            if (_relayService.CanRelayProp && _lastPropPayload is not null)
+            {
+                var propRelayPayload = new PropStatusDto
+                {
+                    Timestamp = _lastPropPayload.Timestamp,
+                    State = _lastPropPayload.State,
+                    TimerMs = _lastPropPayload.TimerMs,
+                    UptimeMs = _lastPropPayload.UptimeMs
+                };
+
+                _ = _relayService.TryRelayPropAsync(propRelayPayload, CancellationToken.None);
+            }
+        }
+
+        matchRelayPayload ??= relayCandidate;
+
         var snapshot = new MatchStateSnapshot(
             MatchId: _currentMatchId,
             LifecycleState: _lifecycleState,
@@ -508,73 +615,50 @@ public sealed class MatchCoordinator : IDisposable
             LastActionDescription: _lastActionDescription,
             FocusAcquired: _focusAcquired,
             Players: players,
-            TeamPlayerCounts: teamPlayerCounts);
+            TeamPlayerCounts: teamPlayerCounts,
+            LatestRelayPayload: matchRelayPayload);
 
         CurrentSnapshot = snapshot;
         SnapshotUpdated?.Invoke(this, snapshot);
 
-        if (_relayService.IsEnabled)
+        _logger.LogDebug("State updated via {Source}: {@Snapshot}", source, snapshot);
+    }
+
+    private MatchSnapshotDto? BuildLocalTerminalSnapshotLocked()
+    {
+        if (_currentMatchId is null)
         {
-            if (_relayService.CanRelayMatch && _lastSnapshotPayload is not null)
-            {
-                var matchRelayPayload = _lastSnapshotPayload;
-
-                var shouldHoldFinalData = _lastSnapshotPayload.Status == MatchSnapshotStatus.Completed
-                    && !_lastSnapshotPayload.IsLastSend
-                    && !forceRelay;
-
-                if (shouldHoldFinalData)
-                {
-                    _logger.LogDebug("Buffering relay waiting for final data");
-                }
-                else
-                {
-                    if (IsTerminalStatus(matchRelayPayload.Status))
-                    {
-                        var expectedWinner = GetExpectedWinner();
-                        var isWinnerMismatch = !string.IsNullOrWhiteSpace(expectedWinner)
-                            && !string.Equals(matchRelayPayload.WinnerTeam, expectedWinner, StringComparison.Ordinal);
-                        var updatedStatus = matchRelayPayload.Status;
-
-                        if (expectedWinner is not null && matchRelayPayload.Status == MatchSnapshotStatus.WaitingOnFinalData)
-                        {
-                            updatedStatus = MatchSnapshotStatus.Completed;
-                        }
-
-                        if (isWinnerMismatch || updatedStatus != matchRelayPayload.Status)
-                        {
-                            matchRelayPayload = new MatchSnapshotDto
-                            {
-                                Id = matchRelayPayload.Id,
-                                Timestamp = matchRelayPayload.Timestamp,
-                                IsLastSend = matchRelayPayload.IsLastSend,
-                                Status = updatedStatus,
-                                RemainingTimeMs = matchRelayPayload.RemainingTimeMs,
-                                WinnerTeam = isWinnerMismatch ? expectedWinner : matchRelayPayload.WinnerTeam,
-                                Players = matchRelayPayload.Players
-                            };
-                        }
-                    }
-
-                    _ = _relayService.TryRelayMatchAsync(matchRelayPayload, CancellationToken.None);
-                }
-            }
-
-            if (_relayService.CanRelayProp && _lastPropPayload is not null)
-            {
-                var propRelayPayload = new PropStatusDto
-                {
-                    Timestamp = _lastPropPayload.Timestamp,
-                    State = _lastPropPayload.State,
-                    TimerMs = _lastPropPayload.TimerMs,
-                    UptimeMs = _lastPropPayload.UptimeMs
-                };
-
-                _ = _relayService.TryRelayPropAsync(propRelayPayload, CancellationToken.None);
-            }
+            return null;
         }
 
-        _logger.LogDebug("State updated via {Source}: {@Snapshot}", source, snapshot);
+        var expectedWinner = GetExpectedWinner();
+        var basePayload = _lastSnapshotPayload;
+        var status = basePayload?.Status ?? MatchSnapshotStatus.Running;
+
+        if (!IsTerminalStatus(status))
+        {
+            status = MatchSnapshotStatus.Completed;
+        }
+
+        var timestamp = basePayload?.Timestamp
+            ?? (_lastSnapshotTimestamp != 0
+                ? _lastSnapshotTimestamp
+                : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+        var remainingTime = basePayload?.RemainingTimeMs ?? _lastMatchRemainingMs ?? 0;
+        var players = basePayload?.Players ?? Array.Empty<MatchPlayerSnapshotDto>();
+        var winner = !string.IsNullOrWhiteSpace(expectedWinner) ? expectedWinner : basePayload?.WinnerTeam;
+
+        return new MatchSnapshotDto
+        {
+            Id = _currentMatchId,
+            Timestamp = timestamp,
+            IsLastSend = true,
+            Status = status,
+            RemainingTimeMs = remainingTime,
+            WinnerTeam = winner,
+            Players = players
+        };
     }
 
     private double? GetPropTimerRemainingMs(DateTimeOffset now)

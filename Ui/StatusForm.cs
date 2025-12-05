@@ -28,6 +28,7 @@ public sealed class StatusForm : Form
     private MatchStateSnapshot _snapshot = MatchStateSnapshot.Default;
     private FocusWindowInfo _focusWindowInfo = FocusWindowInfo.Empty;
     private MatchStateSnapshot? _lastRenderedSnapshot;
+    private bool _hasShownResults;
 
     private readonly Label _matchLabel = new();
     private readonly Label _httpLabel = new();
@@ -726,6 +727,23 @@ public sealed class StatusForm : Form
             return;
         }
 
+        var previousState = _lastRenderedSnapshot?.LifecycleState;
+        var currentState = snapshot.LifecycleState;
+
+        if (currentState is MatchLifecycleState.Idle or MatchLifecycleState.WaitingOnStart)
+        {
+            _hasShownResults = false;
+        }
+
+        var isTerminal = currentState is MatchLifecycleState.Completed or MatchLifecycleState.Cancelled;
+        var wasTerminal = previousState is MatchLifecycleState.Completed or MatchLifecycleState.Cancelled;
+
+        if (isTerminal && !wasTerminal && !_hasShownResults)
+        {
+            _hasShownResults = true;
+            ShowMatchResults(snapshot);
+        }
+
         _matchLabel.Text = snapshot.MatchId ?? "—";
         var hasMatchData = snapshot.MatchId is not null
             || snapshot.LastClockUpdate is not null
@@ -855,6 +873,12 @@ public sealed class StatusForm : Form
         }
 
         base.OnFormClosing(e);
+    }
+
+    private void ShowMatchResults(MatchStateSnapshot snapshot)
+    {
+        var resultForm = new MatchResultForm(snapshot, _coordinator.AttackingTeam, _coordinator.DefendingTeam);
+        resultForm.Show(this);
     }
     
     private void OnFocusTimerTick(object? sender, EventArgs e)
