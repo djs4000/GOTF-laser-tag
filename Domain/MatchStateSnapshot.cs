@@ -24,7 +24,7 @@ public sealed record MatchStateSnapshot(
     bool FocusAcquired,
     IReadOnlyList<MatchPlayerSnapshotDto> Players,
     IReadOnlyList<TeamPlayerCountSnapshot> TeamPlayerCounts,
-    MatchSnapshotDto? LatestRelayPayload,
+    MatchRelayDto? LatestRelayPayload,
     CombinedRelayPayload? LatestCombinedRelayPayload)
 {
     public static readonly MatchStateSnapshot Default = new(

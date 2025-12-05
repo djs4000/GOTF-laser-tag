@@ -517,7 +517,7 @@ public sealed class MatchCoordinator : IDisposable
         var players = _lastSnapshotPayload?.Players ?? Array.Empty<MatchPlayerSnapshotDto>();
         var teamPlayerCounts = BuildTeamPlayerCounts(players);
 
-        MatchSnapshotDto? matchRelayPayload = null;
+        MatchRelayDto? matchRelayPayload = null;
         var awaitingFinalData = false;
 
         var relayCandidate = _lastSnapshotPayload is not null
@@ -574,13 +574,14 @@ public sealed class MatchCoordinator : IDisposable
                 }
                 else
                 {
-                    matchRelayPayload = relayCandidate;
-                    _ = _relayService.TryRelayMatchAsync(relayCandidate, CancellationToken.None);
+                    matchRelayPayload = ToMatchRelayPayload(relayCandidate);
+                    _ = _relayService.TryRelayMatchAsync(matchRelayPayload, CancellationToken.None);
                 }
             }
             else if (_relayService.CanRelayMatch && relayCandidate is null && _matchEnded && !awaitingFinalData)
             {
-                matchRelayPayload = BuildLocalTerminalSnapshotLocked();
+                var localTerminalSnapshot = BuildLocalTerminalSnapshotLocked();
+                matchRelayPayload = localTerminalSnapshot is not null ? ToMatchRelayPayload(localTerminalSnapshot) : null;
                 if (matchRelayPayload is not null)
                 {
                     _ = _relayService.TryRelayMatchAsync(matchRelayPayload, CancellationToken.None);
@@ -605,7 +606,7 @@ public sealed class MatchCoordinator : IDisposable
                 }
             }
 
-            var combinedMatchPayload = matchRelayPayload ?? relayCandidate;
+            var combinedMatchPayload = matchRelayPayload ?? (relayCandidate is not null ? ToMatchRelayPayload(relayCandidate) : null);
             if (_relayService.CanRelayCombined && combinedMatchPayload is not null)
             {
                 combinedRelayPayload = new CombinedRelayPayload
@@ -618,7 +619,7 @@ public sealed class MatchCoordinator : IDisposable
             }
         }
 
-        matchRelayPayload ??= relayCandidate;
+        matchRelayPayload ??= relayCandidate is not null ? ToMatchRelayPayload(relayCandidate) : null;
 
         var snapshot = new MatchStateSnapshot(
             MatchId: _currentMatchId,
@@ -699,6 +700,20 @@ public sealed class MatchCoordinator : IDisposable
         var elapsedMs = (now - _propTimerSyncedAt.Value).TotalMilliseconds;
         var remainingMs = _propTimerRemainingMs.Value - elapsedMs;
         return Math.Max(0, remainingMs);
+    }
+
+    private static MatchRelayDto ToMatchRelayPayload(MatchSnapshotDto source)
+    {
+        return new MatchRelayDto
+        {
+            Match = source.Id,
+            Timestamp = source.Timestamp,
+            IsLastSend = source.IsLastSend,
+            Status = source.Status,
+            RemainingTimeMs = source.RemainingTimeMs,
+            WinnerTeam = source.WinnerTeam,
+            Players = source.Players
+        };
     }
 
     private static IReadOnlyList<TeamPlayerCountSnapshot> BuildTeamPlayerCounts(IReadOnlyList<MatchPlayerSnapshotDto> players)

@@ -5,7 +5,7 @@ namespace LaserTag.Defusal.Domain;
 /// </summary>
 public sealed class CombinedRelayPayload
 {
-    public MatchSnapshotDto? Match { get; init; }
+    public MatchRelayDto? Match { get; init; }
 
     public PropStatusDto? Prop { get; init; }
 }
