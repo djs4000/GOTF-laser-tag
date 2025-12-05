@@ -534,14 +534,25 @@ public sealed class MatchCoordinator : IDisposable
             var isWinnerMismatch = !string.IsNullOrWhiteSpace(expectedWinner)
                 && !string.Equals(relayCandidate.WinnerTeam, expectedWinner, StringComparison.Ordinal);
 
+            MatchSnapshotDto ApplyWinner(MatchSnapshotDto source, string? winner) => new MatchSnapshotDto
+            {
+                Id = source.Id,
+                Timestamp = source.Timestamp,
+                IsLastSend = source.IsLastSend,
+                Status = source.Status,
+                RemainingTimeMs = source.RemainingTimeMs,
+                WinnerTeam = winner,
+                Players = source.Players
+            };
+
             if (expectedWinner is not null && relayCandidate.Status == MatchSnapshotStatus.WaitingOnFinalData)
             {
                 awaitingFinalData = true;
-                relayCandidate = relayCandidate with { WinnerTeam = expectedWinner };
+                relayCandidate = ApplyWinner(relayCandidate, expectedWinner);
             }
             else if (isWinnerMismatch)
             {
-                relayCandidate = relayCandidate with { WinnerTeam = expectedWinner };
+                relayCandidate = ApplyWinner(relayCandidate, expectedWinner);
             }
         }
 
@@ -573,10 +584,9 @@ public sealed class MatchCoordinator : IDisposable
                 }
             }
 
-        RelayProp:
-            if (_relayService.CanRelayProp && _lastPropPayload is not null)
-            {
-                propRelayPayload = new PropStatusDto
+        if (_relayService.CanRelayProp && _lastPropPayload is not null)
+        {
+            propRelayPayload = new PropStatusDto
                 {
                     Timestamp = _lastPropPayload.Timestamp,
                     State = _lastPropPayload.State,

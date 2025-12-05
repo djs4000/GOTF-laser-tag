@@ -17,7 +17,7 @@ public partial class MatchResultForm : Form
     private Label? lblReason;
     private TextBox? txtFinalPayload;
     private Button? btnClose;
-    private System.ComponentModel.IContainer components = null;
+    private System.ComponentModel.IContainer? components = null;
 
     protected override void Dispose(bool disposing)
     {
