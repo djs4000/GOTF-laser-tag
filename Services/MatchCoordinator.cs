@@ -44,6 +44,7 @@ public sealed class MatchCoordinator : IDisposable
     private bool _focusAcquired;
     private DateTimeOffset _lastAutomationAt = DateTimeOffset.MinValue;
     private PropStatusDto? _lastPropPayload;
+    private PropStatusDto? _lastPropRelayPayload;
     private MatchSnapshotDto? _lastSnapshotPayload;
     private double? _propTimerRemainingMs;
     private DateTimeOffset? _propTimerSyncedAt;
@@ -399,6 +400,7 @@ public sealed class MatchCoordinator : IDisposable
             _lastActionDescription = "Idle (no match data)";
             _focusAcquired = false;
             _lastPropPayload = null;
+            _lastPropRelayPayload = null;
             _lastSnapshotPayload = null;
             _propTimerRemainingMs = null;
             _propTimerSyncedAt = null;
@@ -526,7 +528,7 @@ public sealed class MatchCoordinator : IDisposable
                 ? BuildLocalTerminalSnapshotLocked()
                 : null;
 
-        PropStatusDto? propRelayPayload = null;
+        PropStatusDto? propRelayPayload = _lastPropRelayPayload;
         CombinedRelayPayload? combinedRelayPayload = null;
 
         if (_relayService.IsEnabled && relayCandidate is not null)
@@ -594,6 +596,8 @@ public sealed class MatchCoordinator : IDisposable
                     TimerMs = _lastPropPayload.TimerMs,
                     UptimeMs = _lastPropPayload.UptimeMs
                 };
+
+                _lastPropRelayPayload = propRelayPayload;
 
                 if (_relayService.CanRelayProp)
                 {
@@ -746,6 +750,7 @@ public sealed class MatchCoordinator : IDisposable
         _lastActionDescription = "New match";
         _focusAcquired = false;
         _lastPropPayload = null;
+        _lastPropRelayPayload = null;
         _lastSnapshotPayload = null;
         _propLatencyWindow.Clear();
         _clockLatencyWindow.Clear();
