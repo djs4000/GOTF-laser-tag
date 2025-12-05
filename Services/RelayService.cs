@@ -31,13 +31,11 @@ public sealed class RelayService
         _serializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false));
     }
 
-    public bool IsEnabled => _options.Enabled && (CanRelayMatch || CanRelayProp || CanRelayCombined);
+    public bool IsEnabled => _options.Enabled && (CanRelayMatch || CanRelayProp);
 
     public bool CanRelayMatch => !string.IsNullOrWhiteSpace(_options.MatchUrl ?? _options.Url);
 
     public bool CanRelayProp => !string.IsNullOrWhiteSpace(_options.PropUrl ?? _options.Url);
-
-    public bool CanRelayCombined => !string.IsNullOrWhiteSpace(_options.Url);
 
     public Task TryRelayAsync(object payload, CancellationToken cancellationToken)
     {
@@ -52,11 +50,6 @@ public sealed class RelayService
     public async Task TryRelayPropAsync(object payload, CancellationToken cancellationToken)
     {
         await RelayToUrlAsync(_options.PropUrl ?? _options.Url, payload, cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task TryRelayCombinedAsync(object payload, CancellationToken cancellationToken)
-    {
-        await RelayToUrlAsync(_options.Url, payload, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task RelayToUrlAsync(string? url, object payload, CancellationToken cancellationToken)

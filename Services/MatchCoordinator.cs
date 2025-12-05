@@ -526,10 +526,7 @@ public sealed class MatchCoordinator : IDisposable
                 ? BuildLocalTerminalSnapshotLocked()
                 : null;
 
-        MatchSnapshotDto? matchRelayPayload = null;
-        PropStatusDto? propRelayPayload = null;
-
-        if (_relayService.IsEnabled)
+        if (relayCandidate is not null && IsTerminalStatus(relayCandidate.Status))
         {
             var expectedWinner = GetExpectedWinner();
             var isWinnerMismatch = !string.IsNullOrWhiteSpace(expectedWinner)
@@ -538,7 +535,23 @@ public sealed class MatchCoordinator : IDisposable
 
             if (expectedWinner is not null && relayCandidate.Status == MatchSnapshotStatus.WaitingOnFinalData)
             {
-                matchRelayPayload = _lastSnapshotPayload;
+                updatedStatus = MatchSnapshotStatus.Completed;
+            }
+
+            if (isWinnerMismatch || updatedStatus != relayCandidate.Status)
+            {
+                relayCandidate = new MatchSnapshotDto
+                {
+                    Id = relayCandidate.Id,
+                    Timestamp = relayCandidate.Timestamp,
+                    IsLastSend = relayCandidate.IsLastSend,
+                    Status = updatedStatus,
+                    RemainingTimeMs = relayCandidate.RemainingTimeMs,
+                    WinnerTeam = isWinnerMismatch ? expectedWinner : relayCandidate.WinnerTeam,
+                    Players = relayCandidate.Players
+                };
+            }
+        }
 
         if (_relayService.IsEnabled)
         {
@@ -551,7 +564,7 @@ public sealed class MatchCoordinator : IDisposable
                 if (shouldHoldFinalData)
                 {
                     _logger.LogDebug("Buffering relay waiting for final data");
-                    matchRelayPayload = null;
+                    awaitingFinalData = true;
                 }
                 else
                 {
@@ -571,7 +584,7 @@ public sealed class MatchCoordinator : IDisposable
         RelayProp:
             if (_relayService.CanRelayProp && _lastPropPayload is not null)
             {
-                propRelayPayload = new PropStatusDto
+                var propRelayPayload = new PropStatusDto
                 {
                     Timestamp = _lastPropPayload.Timestamp,
                     State = _lastPropPayload.State,
@@ -580,17 +593,6 @@ public sealed class MatchCoordinator : IDisposable
                 };
 
                 _ = _relayService.TryRelayPropAsync(propRelayPayload, CancellationToken.None);
-            }
-
-            if (_relayService.CanRelayCombined && matchRelayPayload is not null && propRelayPayload is not null)
-            {
-                var combinedPayload = new CombinedRelayPayload
-                {
-                    Match = matchRelayPayload,
-                    Prop = propRelayPayload
-                };
-
-                _ = _relayService.TryRelayCombinedAsync(combinedPayload, CancellationToken.None);
             }
         }
 
