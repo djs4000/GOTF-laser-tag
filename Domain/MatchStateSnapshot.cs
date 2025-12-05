@@ -23,7 +23,8 @@ public sealed record MatchStateSnapshot(
     string LastActionDescription,
     bool FocusAcquired,
     IReadOnlyList<MatchPlayerSnapshotDto> Players,
-    IReadOnlyList<TeamPlayerCountSnapshot> TeamPlayerCounts)
+    IReadOnlyList<TeamPlayerCountSnapshot> TeamPlayerCounts,
+    MatchSnapshotDto? LatestRelayPayload)
 {
     public static readonly MatchStateSnapshot Default = new(
         MatchId: null,
@@ -42,7 +43,8 @@ public sealed record MatchStateSnapshot(
         LastActionDescription: "Idle (no match data)",
         FocusAcquired: false,
         Players: Array.Empty<MatchPlayerSnapshotDto>(),
-        TeamPlayerCounts: Array.Empty<TeamPlayerCountSnapshot>());
+        TeamPlayerCounts: Array.Empty<TeamPlayerCountSnapshot>(),
+        LatestRelayPayload: null);
 }
 
 public sealed record TeamPlayerCountSnapshot(string Team, int Alive, int Total)
