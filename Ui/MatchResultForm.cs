@@ -17,7 +17,7 @@ public partial class MatchResultForm : Form
     private Label? lblReason;
     private TextBox? txtFinalPayload;
     private Button? btnClose;
-    private System.ComponentModel.IContainer components = null;
+    private System.ComponentModel.IContainer? components = null;
 
     protected override void Dispose(bool disposing)
     {
@@ -168,7 +168,8 @@ public partial class MatchResultForm : Form
 
     private void RenderData(MatchStateSnapshot snapshot, string attackingTeam, string defendingTeam)
     {
-        var winner = snapshot.LatestRelayPayload?.WinnerTeam;
+        var combinedPayload = snapshot.LatestCombinedRelayPayload;
+        var winner = combinedPayload?.Match?.WinnerTeam ?? snapshot.LatestRelayPayload?.WinnerTeam;
         if (string.IsNullOrWhiteSpace(winner))
         {
             if (lblWinningTeam is not null) lblWinningTeam.Text = "Unknown";
@@ -189,9 +190,10 @@ public partial class MatchResultForm : Form
 
         if (txtFinalPayload is not null)
         {
-            if (snapshot.LatestRelayPayload is not null)
+            object? payloadToDisplay = combinedPayload ?? (object?)snapshot.LatestRelayPayload;
+            if (payloadToDisplay is not null)
             {
-                txtFinalPayload.Text = JsonSerializer.Serialize(snapshot.LatestRelayPayload, JsonSerializerOptions);
+                txtFinalPayload.Text = JsonSerializer.Serialize(payloadToDisplay, JsonSerializerOptions);
             }
             else
             {
