@@ -527,6 +527,7 @@ public sealed class MatchCoordinator : IDisposable
                 : null;
 
         PropStatusDto? propRelayPayload = null;
+        CombinedRelayPayload? combinedRelayPayload = null;
 
         if (_relayService.IsEnabled && relayCandidate is not null)
         {
@@ -601,15 +602,15 @@ public sealed class MatchCoordinator : IDisposable
             }
 
             var combinedMatchPayload = matchRelayPayload ?? relayCandidate;
-            if (_relayService.CanRelayCombined && combinedMatchPayload is not null && propRelayPayload is not null)
+            if (_relayService.CanRelayCombined && combinedMatchPayload is not null)
             {
-                var combinedPayload = new CombinedRelayPayload
+                combinedRelayPayload = new CombinedRelayPayload
                 {
                     Match = combinedMatchPayload,
                     Prop = propRelayPayload
                 };
 
-                _ = _relayService.TryRelayCombinedAsync(combinedPayload, CancellationToken.None);
+                _ = _relayService.TryRelayCombinedAsync(combinedRelayPayload, CancellationToken.None);
             }
         }
 
@@ -633,7 +634,8 @@ public sealed class MatchCoordinator : IDisposable
             FocusAcquired: _focusAcquired,
             Players: players,
             TeamPlayerCounts: teamPlayerCounts,
-            LatestRelayPayload: matchRelayPayload);
+            LatestRelayPayload: matchRelayPayload,
+            LatestCombinedRelayPayload: combinedRelayPayload);
 
         CurrentSnapshot = snapshot;
         SnapshotUpdated?.Invoke(this, snapshot);
