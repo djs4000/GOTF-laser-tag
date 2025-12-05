@@ -584,9 +584,9 @@ public sealed class MatchCoordinator : IDisposable
                 }
             }
 
-        if (_relayService.CanRelayProp && _lastPropPayload is not null)
-        {
-            propRelayPayload = new PropStatusDto
+            if ((_relayService.CanRelayProp || _relayService.CanRelayCombined) && _lastPropPayload is not null)
+            {
+                propRelayPayload = new PropStatusDto
                 {
                     Timestamp = _lastPropPayload.Timestamp,
                     State = _lastPropPayload.State,
@@ -594,14 +594,18 @@ public sealed class MatchCoordinator : IDisposable
                     UptimeMs = _lastPropPayload.UptimeMs
                 };
 
-                _ = _relayService.TryRelayPropAsync(propRelayPayload, CancellationToken.None);
+                if (_relayService.CanRelayProp)
+                {
+                    _ = _relayService.TryRelayPropAsync(propRelayPayload, CancellationToken.None);
+                }
             }
 
-            if (_relayService.CanRelayCombined && matchRelayPayload is not null && propRelayPayload is not null)
+            var combinedMatchPayload = matchRelayPayload ?? relayCandidate;
+            if (_relayService.CanRelayCombined && combinedMatchPayload is not null && propRelayPayload is not null)
             {
                 var combinedPayload = new CombinedRelayPayload
                 {
-                    Match = matchRelayPayload,
+                    Match = combinedMatchPayload,
                     Prop = propRelayPayload
                 };
 
