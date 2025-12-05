@@ -513,11 +513,14 @@ public sealed class MatchCoordinator : IDisposable
         CurrentSnapshot = snapshot;
         SnapshotUpdated?.Invoke(this, snapshot);
 
+        MatchSnapshotDto? matchRelayPayload = null;
+        PropStatusDto? propRelayPayload = null;
+
         if (_relayService.IsEnabled)
         {
             if (_relayService.CanRelayMatch && _lastSnapshotPayload is not null)
             {
-                var matchRelayPayload = _lastSnapshotPayload;
+                matchRelayPayload = _lastSnapshotPayload;
 
                 var shouldHoldFinalData = _lastSnapshotPayload.Status == MatchSnapshotStatus.Completed
                     && !_lastSnapshotPayload.IsLastSend
@@ -526,6 +529,7 @@ public sealed class MatchCoordinator : IDisposable
                 if (shouldHoldFinalData)
                 {
                     _logger.LogDebug("Buffering relay waiting for final data");
+                    matchRelayPayload = null;
                 }
                 else
                 {
@@ -562,7 +566,7 @@ public sealed class MatchCoordinator : IDisposable
 
             if (_relayService.CanRelayProp && _lastPropPayload is not null)
             {
-                var propRelayPayload = new PropStatusDto
+                propRelayPayload = new PropStatusDto
                 {
                     Timestamp = _lastPropPayload.Timestamp,
                     State = _lastPropPayload.State,
@@ -571,6 +575,17 @@ public sealed class MatchCoordinator : IDisposable
                 };
 
                 _ = _relayService.TryRelayPropAsync(propRelayPayload, CancellationToken.None);
+            }
+
+            if (_relayService.CanRelayCombined && matchRelayPayload is not null && propRelayPayload is not null)
+            {
+                var combinedPayload = new CombinedRelayPayload
+                {
+                    Match = matchRelayPayload,
+                    Prop = propRelayPayload
+                };
+
+                _ = _relayService.TryRelayCombinedAsync(combinedPayload, CancellationToken.None);
             }
         }
 
