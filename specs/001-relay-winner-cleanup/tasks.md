@@ -1,118 +1,128 @@
-﻿# Tasks: Relay Winner Cleanup
+# Tasks: Relay Winner Cleanup
 
-**Input**: Design documents from `/specs/001-relay-winner-cleanup/`
-**Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md, contracts/
+**Input**: Design documents from `D:\Documents\Code Project\GOTF-laser-tag\specs\001-relay-winner-cleanup\`
 
-**Tests**: Tests are OPTIONAL. Include only where explicitly called out below.
+**Prerequisites**: plan.md (required), spec.md (required), research.md, data-model.md, contracts/
 
-**Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
+**Tests**: Only add/execute tests explicitly listed below.
+
+**Organization**: Tasks are grouped by user story so each slice can be implemented, tested, and delivered independently.
 
 ## Format: `[ID] [P?] [Story] Description`
 
+`[P]` = parallelizable task (no dependency conflicts). `[US#]` labels user-story tasks. Include absolute file paths in every description.
+
+---
+
 ## Phase 1: Setup (Shared Infrastructure)
 
-- [X] T001 Confirm build/run baseline for tray app via `dotnet build Application.csproj -c Release`.
-- [X] T002 Review `appsettings.json` to ensure Relay configuration defaults to the combined endpoint and document assumptions in specs/001-relay-winner-cleanup/quickstart.md.
-- [ ] T003 Run `dotnet test Tests/Tests.csproj` to ensure existing tests pass before feature changes.
+**Purpose**: Validate scope and baseline build before modifying code.
+
+- [X] T001 Review governing requirements in `D:\Documents\Code Project\GOTF-laser-tag\agents.md`, `D:\Documents\Code Project\GOTF-laser-tag\specs\001-relay-winner-cleanup\plan.md`, and `D:\Documents\Code Project\GOTF-laser-tag\specs\001-relay-winner-cleanup\spec.md` to ensure upcoming changes align with AGENTS.md.
+- [X] T002 [P] Run baseline `dotnet build` + `dotnet test` for `D:\Documents\Code Project\GOTF-laser-tag\Application.csproj` and `D:\Documents\Code Project\GOTF-laser-tag\Tests\Tests.csproj`, archiving logs referenced by quickstart validation.
 
 ---
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 
-- [X] T004 Map current relay endpoints and winner logic references across `Http/` handlers, `Services/RelayService.cs`, and `Services/MatchCoordinator.cs` for planned removals/refactors.
-- [X] T005 [P] Add detailed logging in `Services/MatchCoordinator.cs` for winner authority decisions and relay payload composition to support validation.
-- [X] T006 [P] Verify buffered state stores the most recent match and prop snapshots in `Services/MatchCoordinator.cs` for reuse across relays.
-- [X] T007 [P] Audit `Services/FocusService.cs` and `Services/MatchCoordinator.cs` to confirm objective outcomes still invoke Ctrl+S automation against the ICE window and add regression hooks as needed.
+**Purpose**: Shared helpers and fixtures required by all user stories.
+
+- [X] T003 Create a reusable combined relay schema validator that loads `D:\Documents\Code Project\GOTF-laser-tag\specs\001-relay-winner-cleanup\contracts\combined-relay.json` and expose helper methods inside `D:\Documents\Code Project\GOTF-laser-tag\Tests\MatchCoordinatorTests.cs`.
+- [X] T004 [P] Build deterministic relay/focus service test doubles inside `D:\Documents\Code Project\GOTF-laser-tag\Tests\MatchCoordinatorTests.cs` to simulate asynchronous /prop and /match cadences for later story coverage.
 
 ---
 
 ## Phase 3: User Story 1 - Single Combined Relay (Priority: P1)
 
-**Goal**: Only combined relay endpoint is exposed and used.
+**Goal**: Downstream systems only receive the combined relay endpoint, and every dispatch bundles the latest match + prop snapshots.
 
-**Independent Test**: Post /prop and /match updates; verify only combined relay fires with match+prop data (no legacy endpoints hit).
+**Independent Test**: Post alternating `/prop` and `/match` payloads; verify only the combined relay URL fires and every payload contains populated `match` and `prop` objects even if only one source updated.
 
-### Implementation
+### Tests for User Story 1
 
-- [X] T008 [US1] Remove legacy relay endpoint handlers from `Http/` and related routing registrations.
-- [X] T009 [US1] Simplify relay configuration in `Services/RelayService.cs` and `appsettings.json` to a single combined endpoint.
-- [X] T010 [P] [US1] Update `Program.cs` and any middleware wiring so only the combined relay pipeline is registered.
-- [X] T011 [US1] Ensure combined payload serialization in `Domain/CombinedPayloadDto.cs` (or equivalent) prevents null/empty match and prop sections.
+- [X] T005 [P] [US1] Add regression test in `D:\Documents\Code Project\GOTF-laser-tag\Tests\MatchCoordinatorTests.cs` that sends only `/prop` updates and asserts the combined relay payload still embeds the buffered match snapshot.
+- [X] T006 [P] [US1] Add regression test in `D:\Documents\Code Project\GOTF-laser-tag\Tests\MatchCoordinatorTests.cs` to confirm alternating `/match` and `/prop` updates never trigger legacy relay endpoints (assert the stub relay receives a single combined URL).
 
-### Validation
+### Implementation for User Story 1
 
-- [X] T012 [US1] Extend `Tests/MatchCoordinatorTests.cs` with a case where only /prop updates arrive and assert the combined relay payload includes the latest match snapshot.
-- [X] T013 [US1] Extend `Tests/MatchCoordinatorTests.cs` with a case that verifies no legacy relay endpoint is invoked (e.g., assert only one relay URL is used).
+- [X] T007 [US1] Remove match-only/prop-only relay artifacts by deleting `D:\Documents\Code Project\GOTF-laser-tag\Domain\MatchRelayDto.cs` and stripping any remaining references in `D:\Documents\Code Project\GOTF-laser-tag\Services\RelayService.cs` and `D:\Documents\Code Project\GOTF-laser-tag\Program.cs`, adding inline comments clarifying combined-only behavior.
+- [X] T008 [P] [US1] Enforce combined payload contract validation inside `D:\Documents\Code Project\GOTF-laser-tag\Services\RelayService.cs` and `D:\Documents\Code Project\GOTF-laser-tag\Domain\CombinedRelayPayload.cs`, ensuring match/prop objects and player collections are never null and logging schema violations.
+- [X] T009 [P] [US1] Harden buffering inside `D:\Documents\Code Project\GOTF-laser-tag\Services\MatchCoordinator.cs` so `BuildCombinedPayloadLocked` clones the latest match and prop DTOs with fallback timestamps even when one source has not reported, documenting cadence handling per AGENTS.md.
+- [ ] T010 [US1] Update operator configuration/docs in `D:\Documents\Code Project\GOTF-laser-tag\appsettings.json` and `D:\Documents\Code Project\GOTF-laser-tag\specs\001-relay-winner-cleanup\quickstart.md` to describe the single combined relay endpoint and remove references to deprecated relays.
 
 ---
 
 ## Phase 4: User Story 2 - Correct Winner Determination (Priority: P1)
 
-**Goal**: Winner honors host team wipe if prior to objective; otherwise objective override or time expiration applies while triggering focus automation.
+**Goal**: Winner logic honors host team wipes only before objective resolution, otherwise objective (detonate/defuse) or time expiration outcomes override, and focus automation triggers during objective endings.
 
-**Independent Test**: Simulate host Completed with winner due to wipe before prop resolution; simulate explode/defuse overrides; simulate timeout no-plant → defenders; verify Ctrl+S fires on objective outcomes.
+**Independent Test**: Simulate (1) host Completed with WinnerTeam prior to any prop resolution, (2) prop detonation/defuse after host winner to ensure override, and (3) timeout with no plant to award defenders—each scenario should populate `winner_team`, `winner_reason`, and trigger Ctrl+S when objectives resolve.
 
-### Implementation
+### Tests for User Story 2
 
-- [X] T014 [US2] Encode winner authority precedence (HostTeamWipe > Objective outcomes > TimeExpiration) within `Services/MatchCoordinator.cs`.
-- [X] T015 [US2] Populate `winner_team` and `winner_reason` fields in relay DTOs (`Domain/CombinedPayloadDto.cs` and `Services/RelayService.cs`).
-- [X] T016 [P] [US2] Guard against host completion events overriding an already resolved objective outcome within `Services/MatchCoordinator.cs`.
-- [X] T017 [US2] Preserve FSM timing enforcement (180s no-plant auto-end, 40s overtime) while applying winner outcomes in `Services/MatchCoordinator.cs`.
-- [X] T018 [P] [US2] Update `Ui/MatchResultForm.cs` (or equivalent) to display the final winner and winner_reason consistent with relay payloads.
-- [X] T019 [US2] Ensure `Services/FocusService.cs` is invoked from `Services/MatchCoordinator.cs` whenever objective outcomes finalize the match (Ctrl+S automation).
+- [ ] T011 [P] [US2] Add host team-wipe test case inside `D:\Documents\Code Project\GOTF-laser-tag\Tests\MatchCoordinatorTests.cs` verifying `winner_team` mirrors the host WinnerTeam when Completed arrives before prop events.
+- [ ] T012 [P] [US2] Add prop detonation/defuse override tests to `D:\Documents\Code Project\GOTF-laser-tag\Tests\MatchCoordinatorTests.cs`, asserting host winners are superseded and the focus-service stub records a Ctrl+S invocation.
+- [ ] T013 [P] [US2] Add timeout and overtime coverage in `D:\Documents\Code Project\GOTF-laser-tag\Tests\MatchCoordinatorTests.cs` ensuring defenders win when no plant occurs by 180 s and attackers win when the overtime defuse window expires.
 
-### Validation
+### Implementation for User Story 2
 
-- [X] T020 [US2] Add host team-wipe test coverage to `Tests/MatchCoordinatorTests.cs`, asserting winner_team stays aligned with host WinnerTeam when resolved before objective events.
-- [X] T021 [US2] Add prop explode/defuse override tests to `Tests/MatchCoordinatorTests.cs`, verifying winner_team/winner_reason reflect objective outcomes and that host values are ignored.
-- [X] T022 [US2] Add no-plant timeout test plus countdown-ignore coverage to `Tests/MatchCoordinatorTests.cs`, asserting defenders win and countdown prop events are ignored.
-- [ ] T023 [US2] Create `scripts/focus-validation.ps1` (or update existing harness) to simulate objective outcomes and confirm logs (`logs/focus.log`) show Ctrl+S automation triggered.
-- [X] T024 [US2] Add assertions in `Tests/MatchCoordinatorTests.cs` (or separate test fixture) that winner_reason is populated for every end-of-match scenario, satisfying SC-004.
+- [ ] T014 [US2] Implement winner precedence logic in `D:\Documents\Code Project\GOTF-laser-tag\Services\MatchCoordinator.cs`, allowing HostTeamWipe winners only before objective resolution and enabling objective/time authorities to override via `SetWinnerLocked`.
+- [ ] T015 [P] [US2] Extend `D:\Documents\Code Project\GOTF-laser-tag\Domain\MatchStateSnapshot.cs` and `D:\Documents\Code Project\GOTF-laser-tag\Ui\MatchResultForm.cs` so winner roles and reasons surface consistently (including CombinedRelayPayload winner_reason metadata).
+- [ ] T016 [P] [US2] Ensure focus automation remains wired by verifying `TryEndMatchAsync` in `D:\Documents\Code Project\GOTF-laser-tag\Services\MatchCoordinator.cs` invokes `D:\Documents\Code Project\GOTF-laser-tag\Services\FocusService.cs` whenever prop outcomes resolve the match, adding descriptive logs.
+- [ ] T017 [US2] Refine FSM enforcement in `D:\Documents\Code Project\GOTF-laser-tag\Services\MatchCoordinator.cs` so countdown prop events are ignored, time-expiration winners annotate context, and `_winnerReason` always matches AGENTS.md authority order.
 
 ---
 
 ## Phase 5: User Story 3 - Deterministic Relay Content (Priority: P2)
 
-**Goal**: Every relay payload includes latest buffered match and prop objects (no null components).
+**Goal**: Every relay payload contains sanitized, last-known match and prop objects even under cadence mismatches or when only one source has reported.
 
-**Independent Test**: Alternate /match and /prop at different cadences; each relay has both sections populated with last-known data.
+**Independent Test**: Run alternating cadence simulations (e.g., 10 Hz /match vs 2 Hz /prop) and one-sided source scenarios; verify 200 consecutive relays contain fully populated match + prop sections with stable winner metadata.
 
-### Implementation
+### Tests for User Story 3
 
-- [X] T025 [US3] Ensure buffering path in `Services/MatchCoordinator.cs` persists last-known match snapshot when /prop triggers the relay.
-- [X] T026 [US3] Ensure buffering path in `Services/MatchCoordinator.cs` persists last-known prop status when /match triggers the relay.
-- [X] T027 [P] [US3] Align serialization with `contracts/combined-relay.json`, adding schema validation hooks in `Services/RelayService.cs` if needed.
+- [ ] T018 [P] [US3] Add high-frequency `/match` vs low-frequency `/prop` test in `D:\Documents\Code Project\GOTF-laser-tag\Tests\MatchCoordinatorTests.cs` asserting each relay payload carries the latest prop snapshot.
+- [ ] T019 [P] [US3] Add single-source + alternating-edge test in `D:\Documents\Code Project\GOTF-laser-tag\Tests\MatchCoordinatorTests.cs` verifying CombinedRelayPayload substitutes deterministic defaults instead of emitting null sections when one source is absent.
 
-### Validation
+### Implementation for User Story 3
 
-- [X] T028 [US3] Add high-frequency /match vs low-frequency /prop cadence test in `Tests/MatchCoordinatorTests.cs`, ensuring relay payload always includes the last prop state.
-- [X] T029 [US3] Add high-frequency /prop vs low-frequency /match cadence test in `Tests/MatchCoordinatorTests.cs`, ensuring relay payload always includes the last match snapshot.
-- [ ] T030 [US3] Run contract validation using `contracts/combined-relay.json` via a schema check script (`scripts/schema/validate-combined-relay.ps1`).
+- [ ] T020 [US3] Introduce immutable buffer copies within `D:\Documents\Code Project\GOTF-laser-tag\Services\MatchCoordinator.cs` so relays serialize sanitized DTOs (no shared mutable references), documenting the buffering strategy inline.
+- [ ] T021 [P] [US3] Surface the latest CombinedRelayPayload for operators by enhancing `D:\Documents\Code Project\GOTF-laser-tag\Ui\StatusForm.cs` and `D:\Documents\Code Project\GOTF-laser-tag\Ui\MatchResultForm.cs` to display timestamped payload JSON, winner_team, and winner_reason.
+- [ ] T022 [US3] Invoke the schema validator from T003 inside `D:\Documents\Code Project\GOTF-laser-tag\Services\RelayService.cs` before HTTP dispatch and log failures to `D:\Documents\Code Project\GOTF-laser-tag\logs\combined-relay.log`.
 
 ---
 
-## Phase N: Polish & Cross-Cutting Concerns
+## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T031 [P] Update specs/001-relay-winner-cleanup/quickstart.md with the new validation scenarios (focus automation, winner reasons, cadence tests).
-- [ ] T032 [P] Tune diagnostics settings in `appsettings.json` to capture relay payload and focus automation logs at Information level.
-- [ ] T033 [P] Execute `dotnet test Tests/Tests.csproj` plus scenario scripts (`scripts/focus-validation.ps1`, `scripts/schema/validate-combined-relay.ps1`) and archive artifacts.
-- [ ] T034 [P] Verify publishing remains single-file win-x64 (check `Application.csproj` publish profile) and confirm tray UI remains always-on-top after changes.
-- [ ] T035 [P] Add or update performance harness `scripts/perf/relay-latency.ps1` to measure dispatch time; ensure relays fire within sub-second SLA and capture results in `logs/perf.log`.
+**Purpose**: Documentation, validation, and packaging checks after story delivery.
+
+- [ ] T023 [P] Refresh operator docs in `D:\Documents\Code Project\GOTF-laser-tag\specs\001-relay-winner-cleanup\quickstart.md` and `D:\Documents\Code Project\GOTF-laser-tag\specs\001-relay-winner-cleanup\research.md` with the new winner precedence notes, schema validation steps, and cadence scenarios.
+- [ ] T024 [P] Execute the quickstart validation scenarios from `D:\Documents\Code Project\GOTF-laser-tag\specs\001-relay-winner-cleanup\quickstart.md`, capturing relay/focus logs under `D:\Documents\Code Project\GOTF-laser-tag\logs\` for audit.
+- [ ] T025 [P] Verify publishing still produces a single-file win-x64 build by running `dotnet publish` on `D:\Documents\Code Project\GOTF-laser-tag\Application.csproj` and spot-checking the tray UI behavior post-changes.
+- [ ] T026 Investigate and resolve the outstanding latency-related test failures (`ParsesUnixSecondTimestampsForLatency`, `FutureClockTimestampsClampToZeroLatency`, `FuturePropTimestampsClampToZeroLatency`, `LatencySnapshotsPublishWhenWindowCompletes`) in `D:\Documents\Code Project\GOTF-laser-tag\Tests\MatchCoordinatorTests.cs`.
 
 ---
 
 ## Dependencies & Execution Order
 
-- Foundational (Phase 2) blocks all user stories.
-- US1 and US2 (both P1) should proceed sequentially: complete relay consolidation before modifying winner logic/focus automation; US3 depends on buffered state changes from prior phases.
-- Validation tasks rely on the tests/scripts introduced within the same story phase.
+- Phase 1 precedes all work; Phase 2 helpers block every story.
+- User Story 1 (Phase 3) delivers the MVP and must finish before User Story 2 modifies winner logic, which in turn must finish before User Story 3 reuses the finalized buffers.
+- Polish (Phase 6) depends on all targeted user stories being completed.
 
-## Parallel Example: User Story 1
+---
 
-- Tasks T008 and T009 touch different files and can proceed in parallel once T004–T007 complete.
-- T010 can run alongside T011 after configuration updates, while tests T012–T013 run once implementation is ready.
+## Parallel Execution Examples
+
+- **US1**: After T003–T004, tasks T005 and T006 (test scaffolding) can run in parallel, while T008 and T009 modify different files and may proceed concurrently once T007 lands.
+- **US2**: T011–T013 are independent test cases; T015 (UI updates) can run alongside T016 (focus automation) because they touch distinct areas after T014 completes.
+- **US3**: T018 and T019 can be authored simultaneously; T021 (UI) and T022 (RelayService) can run in parallel once T020 finalizes buffer cloning.
+
+---
 
 ## Implementation Strategy
 
-- MVP First: Complete US1 to deliver combined relay-only behavior with deterministic payload contents.
-- Incremental Delivery: After US1, finish US2 to correct winner determination and focus automation; then deliver US3 deterministic cadence handling, followed by polish/performance validation.
+1. **MVP First**: Complete Setup + Foundational phases, then finish User Story 1 to deliver combined-relay-only behavior—this is the MVP scope.
+2. **Incremental Delivery**: Layer User Story 2 winner precedence refactors atop the MVP, validate, then implement User Story 3 deterministic buffering before entering the polish phase.
+3. **Testing Cadence**: For each story, land the designated regression tests first (T005–T006, T011–T013, T018–T019) so implementation changes can be validated immediately.
+
+---

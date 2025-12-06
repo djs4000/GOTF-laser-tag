@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using LaserTag.Defusal.Domain;
@@ -7,12 +10,15 @@ using LaserTag.Defusal.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Xunit;
+using Xunit.Sdk;
 
 namespace LaserTag.Defusal.Tests;
 
 public class MatchCoordinatorTests
 {
-    private static (MatchCoordinator Coordinator, FakeFocusService Focus, TestRelayService Relay) CreateCoordinator(MatchOptions? matchOptions = null)
+    private static readonly CombinedRelaySchemaValidator SchemaValidator = CombinedRelaySchemaValidator.LoadDefault();
+
+    private static (MatchCoordinator Coordinator, DeterministicFocusService Focus, DeterministicRelayService Relay) CreateCoordinator(MatchOptions? matchOptions = null)
     {
         matchOptions ??= new MatchOptions
         {
@@ -22,8 +28,8 @@ public class MatchCoordinatorTests
             ClockExpectedHz = 10
         };
 
-        var focus = new FakeFocusService();
-        var relay = new TestRelayService();
+        var focus = new DeterministicFocusService();
+        var relay = new DeterministicRelayService();
         var timeSync = new TimeSynchronizationService(Options.Create(matchOptions), NullLogger<TimeSynchronizationService>.Instance);
         var coordinator = new MatchCoordinator(
             Options.Create(matchOptions),
@@ -34,6 +40,11 @@ public class MatchCoordinatorTests
             NullLogger<MatchCoordinator>.Instance);
 
         return (coordinator, focus, relay);
+    }
+
+    private static void AssertValidCombinedPayload(CombinedRelayPayload payload)
+    {
+        SchemaValidator.AssertValid(payload);
     }
 
     [Fact]
@@ -150,6 +161,7 @@ public class MatchCoordinatorTests
 
         Assert.NotEmpty(relay.Payloads);
         var payload = relay.Payloads[^1];
+        AssertValidCombinedPayload(payload);
         Assert.Equal("alpha", payload.Match.Id);
         Assert.Equal(PropState.Armed, payload.Prop.State);
     }
@@ -165,6 +177,7 @@ public class MatchCoordinatorTests
 
         Assert.NotEmpty(relay.Payloads);
         var payload = relay.Payloads[^1];
+        AssertValidCombinedPayload(payload);
         Assert.Equal("bravo", payload.Match.Id);
         Assert.Equal(PropState.Armed, payload.Prop.State);
     }
@@ -179,6 +192,7 @@ public class MatchCoordinatorTests
 
         Assert.NotEmpty(relay.Payloads);
         var payload = relay.Payloads[^1];
+        AssertValidCombinedPayload(payload);
         Assert.False(string.IsNullOrWhiteSpace(payload.Match.Id));
         Assert.NotNull(payload.Match);
     }
@@ -193,8 +207,49 @@ public class MatchCoordinatorTests
 
         Assert.NotEmpty(relay.Payloads);
         var payload = relay.Payloads[^1];
+        AssertValidCombinedPayload(payload);
         Assert.NotNull(payload.Prop);
         Assert.Equal("charlie", payload.Match.Id);
+    }
+
+    [Fact]
+    public async Task PropOnlySequenceKeepsBufferedMatchSnapshot()
+    {
+        var (coordinator, _, relay) = CreateCoordinator();
+        relay.IsEnabled = true;
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("sequence", MatchSnapshotStatus.Running, 210_000, 1), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 2 }, CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Active, Timestamp = 3 }, CancellationToken.None);
+
+        Assert.True(relay.Payloads.Count >= 2, "Expected at least the two prop-triggered relay payloads.");
+        Assert.All(relay.Payloads, payload =>
+        {
+            AssertValidCombinedPayload(payload);
+            Assert.Equal("sequence", payload.Match.Id);
+        });
+        Assert.Contains(relay.Payloads, payload => payload.Prop.State == PropState.Armed);
+        Assert.Contains(relay.Payloads, payload => payload.Prop.State == PropState.Active);
+    }
+
+    [Fact]
+    public async Task AlternatingMatchAndPropUpdatesUseCombinedRelay()
+    {
+        var (coordinator, _, relay) = CreateCoordinator();
+        relay.IsEnabled = true;
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("delta", MatchSnapshotStatus.Running, 205_000, 1), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 2 }, CancellationToken.None);
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("delta", MatchSnapshotStatus.Running, 204_000, 3), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Active, Timestamp = 4 }, CancellationToken.None);
+
+        Assert.True(relay.Payloads.Count >= 4, "Expected at least the alternating match/prop relay payloads.");
+        Assert.All(relay.Payloads, payload =>
+        {
+            AssertValidCombinedPayload(payload);
+            Assert.NotNull(payload.Match);
+            Assert.NotNull(payload.Prop);
+        });
     }
 
     [Fact]
@@ -505,26 +560,71 @@ public class MatchCoordinatorTests
         };
     }
 
-    private sealed class FakeFocusService : IFocusService
+    private sealed class DeterministicFocusService : IFocusService
     {
+        private readonly object _sync = new();
+        private readonly List<string> _reasons = new();
+        private TaskCompletionSource<int> _triggerSignal = CreateSignal();
+
         public int TriggerCount { get; private set; }
         public string LastReason { get; private set; } = string.Empty;
 
+        public IReadOnlyList<string> Reasons
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _reasons.ToArray();
+                }
+            }
+        }
+
+        public Task WaitForTriggersAsync(int expectedCount, TimeSpan timeout, CancellationToken cancellationToken = default)
+        {
+            Task<int> waiter;
+            lock (_sync)
+            {
+                if (TriggerCount >= expectedCount)
+                {
+                    return Task.CompletedTask;
+                }
+
+                waiter = _triggerSignal.Task;
+            }
+
+            return waiter.WaitAsync(timeout, cancellationToken);
+        }
+
+        private static TaskCompletionSource<int> CreateSignal() =>
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public void BindToUiThread(SynchronizationContext context)
         {
-            // No UI thread in tests.
+            // Tests run without a WinForms context; no-op.
         }
 
         public Task<FocusActionResult> TryEndMatchAsync(string reason, CancellationToken cancellationToken)
         {
-            TriggerCount++;
-            LastReason = reason;
+            lock (_sync)
+            {
+                TriggerCount++;
+                LastReason = reason;
+                _reasons.Add(reason);
+                _triggerSignal.TrySetResult(TriggerCount);
+                _triggerSignal = CreateSignal();
+            }
+
             return Task.FromResult(new FocusActionResult(true, reason));
         }
 
         public Task<FocusActionResult> TryFocusWindowAsync(string reason, CancellationToken cancellationToken)
         {
-            LastReason = reason;
+            lock (_sync)
+            {
+                LastReason = reason;
+            }
+
             return Task.FromResult(new FocusActionResult(true, reason));
         }
 
@@ -534,16 +634,271 @@ public class MatchCoordinatorTests
         }
     }
 
-    private sealed class TestRelayService : IRelayService
+    private sealed class DeterministicRelayService : IRelayService
     {
+        private readonly object _sync = new();
+        private TaskCompletionSource<int> _payloadSignal = CreateSignal();
+
         public bool IsEnabled { get; set; }
 
         public List<CombinedRelayPayload> Payloads { get; } = new();
 
-        public Task TryRelayCombinedAsync(CombinedRelayPayload payload, CancellationToken cancellationToken)
+        public TimeSpan ArtificialDelay { get; set; } = TimeSpan.Zero;
+
+        public async Task TryRelayCombinedAsync(CombinedRelayPayload payload, CancellationToken cancellationToken)
         {
-            Payloads.Add(payload);
-            return Task.CompletedTask;
+            if (!IsEnabled)
+            {
+                return;
+            }
+
+            var snapshot = ClonePayload(payload);
+
+            lock (_sync)
+            {
+                Payloads.Add(snapshot);
+                _payloadSignal.TrySetResult(Payloads.Count);
+                _payloadSignal = CreateSignal();
+            }
+
+            if (ArtificialDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(ArtificialDelay, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        public Task WaitForPayloadsAsync(int expectedCount, TimeSpan timeout, CancellationToken cancellationToken = default)
+        {
+            Task<int> waiter;
+            lock (_sync)
+            {
+                if (Payloads.Count >= expectedCount)
+                {
+                    return Task.CompletedTask;
+                }
+
+                waiter = _payloadSignal.Task;
+            }
+
+            return waiter.WaitAsync(timeout, cancellationToken);
+        }
+
+        private static TaskCompletionSource<int> CreateSignal() =>
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private static CombinedRelayPayload ClonePayload(CombinedRelayPayload payload)
+        {
+            if (payload.Match is null)
+            {
+                throw new XunitException("Relay payload missing match content during clone.");
+            }
+
+            if (payload.Prop is null)
+            {
+                throw new XunitException("Relay payload missing prop content during clone.");
+            }
+
+            return new CombinedRelayPayload
+            {
+                Timestamp = payload.Timestamp,
+                WinnerTeam = payload.WinnerTeam,
+                WinnerReason = payload.WinnerReason,
+                Match = CloneMatch(payload.Match),
+                Prop = CloneProp(payload.Prop)
+            };
+        }
+
+        private static MatchSnapshotDto CloneMatch(MatchSnapshotDto match)
+        {
+            return new MatchSnapshotDto
+            {
+                Id = match.Id,
+                Timestamp = match.Timestamp,
+                IsLastSend = match.IsLastSend,
+                Status = match.Status,
+                RemainingTimeMs = match.RemainingTimeMs,
+                WinnerTeam = match.WinnerTeam,
+                Players = match.Players is { Count: > 0 } ? match.Players.ToArray() : Array.Empty<MatchPlayerSnapshotDto>()
+            };
+        }
+
+        private static PropStatusDto CloneProp(PropStatusDto prop)
+        {
+            return new PropStatusDto
+            {
+                Timestamp = prop.Timestamp,
+                State = prop.State,
+                TimerMs = prop.TimerMs,
+                UptimeMs = prop.UptimeMs
+            };
+        }
+    }
+
+    private sealed class CombinedRelaySchemaValidator
+    {
+        private readonly HashSet<string> _rootRequired;
+        private readonly HashSet<string> _matchRequired;
+        private readonly HashSet<string> _propRequired;
+        private readonly string _schemaPath;
+
+        private CombinedRelaySchemaValidator(
+            string schemaPath,
+            HashSet<string> rootRequired,
+            HashSet<string> matchRequired,
+            HashSet<string> propRequired)
+        {
+            _schemaPath = schemaPath;
+            _rootRequired = rootRequired;
+            _matchRequired = matchRequired;
+            _propRequired = propRequired;
+        }
+
+        public static CombinedRelaySchemaValidator LoadDefault()
+        {
+            var schemaPath = ResolveSchemaPath();
+
+            using var document = JsonDocument.Parse(File.ReadAllText(schemaPath));
+            var root = document.RootElement;
+            var properties = root.GetProperty("properties");
+
+            return new CombinedRelaySchemaValidator(
+                schemaPath,
+                ExtractRequired(root),
+                ExtractRequired(properties.GetProperty("match")),
+                ExtractRequired(properties.GetProperty("prop")));
+        }
+
+        private static HashSet<string> ExtractRequired(JsonElement element)
+        {
+            if (!element.TryGetProperty("required", out var requiredArray))
+            {
+                return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in requiredArray.EnumerateArray())
+            {
+                var name = entry.GetString();
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    set.Add(name);
+                }
+            }
+
+            return set;
+        }
+
+        public void AssertValid(CombinedRelayPayload payload)
+        {
+            if (payload is null)
+            {
+                throw new XunitException($"Combined relay payload is null (schema: {_schemaPath}).");
+            }
+
+            if (_rootRequired.Contains("timestamp") && payload.Timestamp <= 0)
+            {
+                throw new XunitException("Combined relay payload timestamp must be greater than zero.");
+            }
+
+            if (_rootRequired.Contains("match"))
+            {
+                ValidateMatch(payload.Match);
+            }
+
+            if (_rootRequired.Contains("prop"))
+            {
+                ValidateProp(payload.Prop);
+            }
+        }
+
+        private void ValidateMatch(MatchSnapshotDto? match)
+        {
+            if (match is null)
+            {
+                throw new XunitException($"Schema {_schemaPath} requires a match object.");
+            }
+
+            if (_matchRequired.Contains("id") && string.IsNullOrWhiteSpace(match.Id))
+            {
+                throw new XunitException("match.id is required by the combined relay schema.");
+            }
+
+            if (_matchRequired.Contains("status") && !Enum.IsDefined(typeof(MatchSnapshotStatus), match.Status))
+            {
+                throw new XunitException("match.status must be a valid MatchSnapshotStatus.");
+            }
+
+            if (_matchRequired.Contains("is_last_send"))
+            {
+                _ = match.IsLastSend;
+            }
+
+            if (match.Players is null)
+            {
+                throw new XunitException("match.players must not be null.");
+            }
+        }
+
+        private void ValidateProp(PropStatusDto? prop)
+        {
+            if (prop is null)
+            {
+                throw new XunitException($"Schema {_schemaPath} requires a prop object.");
+            }
+
+            if (_propRequired.Contains("state") && !Enum.IsDefined(typeof(PropState), prop.State))
+            {
+                throw new XunitException("prop.state must be a valid PropState.");
+            }
+
+            if (_propRequired.Contains("timestamp") && prop.Timestamp <= 0)
+            {
+                throw new XunitException("prop.timestamp must be greater than zero.");
+            }
+
+            if (_propRequired.Contains("uptime_ms") && prop.UptimeMs is null)
+            {
+                throw new XunitException("prop.uptime_ms must be supplied.");
+            }
+        }
+
+        private static string ResolveSchemaPath()
+        {
+            var relativePath = Path.Combine("specs", "001-relay-winner-cleanup", "contracts", "combined-relay.json");
+            foreach (var root in EnumerateProbeRoots())
+            {
+                var candidate = Path.Combine(root, relativePath);
+                if (File.Exists(candidate))
+                {
+                    return Path.GetFullPath(candidate);
+                }
+            }
+
+            var fallback = Path.Combine(AppContext.BaseDirectory, relativePath);
+            throw new FileNotFoundException("Combined relay schema not found.", Path.GetFullPath(fallback));
+        }
+
+        private static IEnumerable<string> EnumerateProbeRoots()
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var start in new[] { AppContext.BaseDirectory, Directory.GetCurrentDirectory() })
+            {
+                if (string.IsNullOrWhiteSpace(start))
+                {
+                    continue;
+                }
+
+                var current = new DirectoryInfo(start);
+                while (current is not null)
+                {
+                    if (seen.Add(current.FullName))
+                    {
+                        yield return current.FullName;
+                    }
+
+                    current = current.Parent;
+                }
+            }
         }
     }
 }

@@ -32,6 +32,7 @@ public sealed class MatchCoordinator : IDisposable
     private long _lastSnapshotTimestamp;
     private int? _lastMatchRemainingMs;
     private double _lastElapsedSec;
+    private double? _autoEndAnchorElapsedSec;
     private DateTimeOffset? _lastClockUpdate;
     private DateTimeOffset? _lastPropUpdate;
     private readonly Queue<TimeSpan> _propLatencyWindow = new();
@@ -237,7 +238,8 @@ public sealed class MatchCoordinator : IDisposable
             var isNewMatchId = !string.Equals(_currentMatchId, dto.Id, StringComparison.Ordinal);
             if (_currentMatchId is null)
             {
-                ResetForNewMatch(dto.Id);
+                var preservePropState = _lastPropPayload is not null;
+                ResetForNewMatch(dto.Id, preservePropState);
             }
             else if (isNewMatchId)
             {
@@ -304,6 +306,10 @@ public sealed class MatchCoordinator : IDisposable
                     if (_propState == PropState.Idle)
                     {
                         _propState = PropState.Active;
+                    }
+                    if (_autoEndAnchorElapsedSec is null)
+                    {
+                        _autoEndAnchorElapsedSec = _lastElapsedSec;
                     }
                     _lifecycleState = MatchLifecycleState.Running;
                     EvaluateLiveState(ref shouldTriggerEnd, ref triggerReason);
@@ -374,6 +380,7 @@ public sealed class MatchCoordinator : IDisposable
             ResetForNewMatch(matchId ?? $"manual-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}");
             _propState = PropState.Active;
             _lifecycleState = MatchLifecycleState.Running;
+            _autoEndAnchorElapsedSec = 0;
             PublishSnapshotLocked("Manual start");
         }
     }
@@ -394,6 +401,7 @@ public sealed class MatchCoordinator : IDisposable
             _lastPropTimestamp = 0;
             _lastSnapshotTimestamp = 0;
             _lastElapsedSec = 0;
+            _autoEndAnchorElapsedSec = null;
             _lastMatchRemainingMs = null;
             _lastClockUpdate = null;
             _lastPropUpdate = null;
@@ -436,6 +444,10 @@ public sealed class MatchCoordinator : IDisposable
             return;
         }
 
+        var observedElapsedSinceTrackingStart = _autoEndAnchorElapsedSec is null
+            ? _lastElapsedSec
+            : Math.Max(0, _lastElapsedSec - _autoEndAnchorElapsedSec.Value);
+
         if (IsTerminalPropState(_propState))
         {
             shouldTriggerEnd = true;
@@ -444,7 +456,7 @@ public sealed class MatchCoordinator : IDisposable
             return;
         }
 
-        if (_plantTimeSec is null && _lastElapsedSec >= _matchOptions.AutoEndNoPlantAtSec)
+        if (_plantTimeSec is null && observedElapsedSinceTrackingStart >= _matchOptions.AutoEndNoPlantAtSec)
         {
             shouldTriggerEnd = true;
             triggerReason = $"No plant by {_matchOptions.AutoEndNoPlantAtSec}s";
@@ -503,6 +515,9 @@ public sealed class MatchCoordinator : IDisposable
         _lastActionDescription = $"Ended: {reason}";
     }
 
+    /// <summary>
+    /// Produces a combined payload using the latest buffered match and prop snapshots so every relay carries both components per AGENTS.md cadence rules.
+    /// </summary>
     private CombinedRelayPayload BuildCombinedPayloadLocked(bool forceRelay, long? eventTimestamp)
     {
         var matchPayload = BuildRelayMatchSnapshotLocked(forceRelay);
@@ -777,20 +792,27 @@ public sealed class MatchCoordinator : IDisposable
             || string.Equals(player.State, "active", StringComparison.OrdinalIgnoreCase);
     }
 
-    private void ResetForNewMatch(string matchId)
+    private void ResetForNewMatch(string matchId, bool preservePropState = false)
     {
         _logger.LogInformation("Switching to match {MatchId}", matchId);
         _currentMatchId = matchId;
-        _propState = PropState.Idle;
-        _plantTimeSec = null;
+        if (!preservePropState)
+        {
+            _propState = PropState.Idle;
+            _plantTimeSec = null;
+            _lastPropTimestamp = 0;
+            _lastPropPayload = null;
+            _propTimerRemainingMs = null;
+            _propTimerSyncedAt = null;
+        }
+
         _matchEnded = false;
-        _lastPropTimestamp = 0;
         _lastSnapshotTimestamp = 0;
         _lastElapsedSec = 0;
+        _autoEndAnchorElapsedSec = null;
         _lastMatchRemainingMs = (int)(_matchOptions.LtDisplayedDurationSec * 1000);
-        _lastActionDescription = "New match";
+        _lastActionDescription = preservePropState ? "New match (prop buffered)" : "New match";
         _focusAcquired = false;
-        _lastPropPayload = null;
         _lastSnapshotPayload = null;
         _propLatencyWindow.Clear();
         _clockLatencyWindow.Clear();
@@ -798,8 +820,6 @@ public sealed class MatchCoordinator : IDisposable
         _clockLatencySamplesUntilPublish = 0;
         _propLatency = null;
         _clockLatency = null;
-        _propTimerRemainingMs = null;
-        _propTimerSyncedAt = null;
         _winnerTeam = null;
         _winnerReason = null;
         CancelFinalDataTimeoutLocked();

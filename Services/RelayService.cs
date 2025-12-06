@@ -47,25 +47,19 @@ public sealed class RelayService : IRelayService
 
     private void ValidatePayload(CombinedRelayPayload payload)
     {
+        if (!payload.TryValidate(out var errors))
+        {
+            var message = string.Join("; ", errors);
+            _logger.LogError("Combined relay payload rejected: {ValidationErrors}", message);
+            throw new InvalidOperationException($"Combined relay payload invalid: {message}");
+        }
+
         if (!_options.EnableSchemaValidation)
         {
             return;
         }
 
-        if (payload.Match is null)
-        {
-            throw new InvalidOperationException("Combined relay payload must include match data.");
-        }
-
-        if (payload.Prop is null)
-        {
-            throw new InvalidOperationException("Combined relay payload must include prop data.");
-        }
-
-        if (payload.Match.Players is null)
-        {
-            throw new InvalidOperationException("Combined relay payload must populate match players (use empty array when absent).");
-        }
+        _logger.LogDebug("Combined relay payload passed contract validation (schema validation enabled).");
     }
 
     private async Task RelayToUrlAsync(string url, object payload, CancellationToken cancellationToken)
