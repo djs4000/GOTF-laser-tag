@@ -169,7 +169,9 @@ public partial class MatchResultForm : Form
     private void RenderData(MatchStateSnapshot snapshot, string attackingTeam, string defendingTeam)
     {
         var combinedPayload = snapshot.LatestCombinedRelayPayload;
-        var winner = combinedPayload?.Match?.WinnerTeam ?? snapshot.LatestRelayPayload?.WinnerTeam;
+        var winner = snapshot.WinnerTeam
+            ?? combinedPayload?.WinnerTeam
+            ?? combinedPayload?.Match?.WinnerTeam;
         if (string.IsNullOrWhiteSpace(winner))
         {
             if (lblWinningTeam is not null) lblWinningTeam.Text = "Unknown";
@@ -186,23 +188,40 @@ public partial class MatchResultForm : Form
             }
         }
 
-        if (lblReason is not null) lblReason.Text = GetEndReason(snapshot);
+        if (lblReason is not null) lblReason.Text = GetWinnerReasonText(snapshot, combinedPayload);
 
         if (txtFinalPayload is not null)
         {
-            object? payloadToDisplay = combinedPayload ?? (object?)snapshot.LatestRelayPayload;
-            if (payloadToDisplay is not null)
+            if (combinedPayload is not null)
             {
-                txtFinalPayload.Text = JsonSerializer.Serialize(payloadToDisplay, JsonSerializerOptions);
+                txtFinalPayload.Text = JsonSerializer.Serialize(combinedPayload, JsonSerializerOptions);
             }
             else
             {
-                txtFinalPayload.Text = "No payload sent.";
+                txtFinalPayload.Text = "No combined relay payload available.";
             }
         }
     }
 
-    private static string GetEndReason(MatchStateSnapshot snapshot)
+    private static string GetWinnerReasonText(MatchStateSnapshot snapshot, CombinedRelayPayload? payload)
+    {
+        var reason = snapshot.WinnerReason ?? payload?.WinnerReason;
+        if (reason is not null)
+        {
+            return reason.Value switch
+            {
+                WinnerReason.HostTeamWipe => "Host reported team wipe",
+                WinnerReason.ObjectiveDetonated => "Bomb detonated",
+                WinnerReason.ObjectiveDefused => "Bomb defused",
+                WinnerReason.TimeExpiration => "Time expired (no plant)",
+                _ => reason.Value.ToString()
+            };
+        }
+
+        return DeriveFallbackReason(snapshot);
+    }
+
+    private static string DeriveFallbackReason(MatchStateSnapshot snapshot)
     {
         if (snapshot.LastActionDescription.StartsWith("Triggering end:", StringComparison.OrdinalIgnoreCase))
         {

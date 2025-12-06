@@ -66,7 +66,8 @@ internal static class Program
         });
 
         builder.Services.AddSingleton<CidrAllowlistService>();
-        builder.Services.AddSingleton<RelayService>();
+        // RelayService exclusively publishes the combined match+prop payload mandated by AGENTS.md.
+        builder.Services.AddSingleton<IRelayService, RelayService>();
         builder.Services.AddSingleton<TimeSynchronizationService>();
         builder.Services.AddSingleton<MatchCoordinator>();
         builder.Services.AddSingleton<IFocusService, FocusService>();
