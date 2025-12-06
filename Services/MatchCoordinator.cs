@@ -44,6 +44,7 @@ public sealed class MatchCoordinator : IDisposable
     private bool _focusAcquired;
     private DateTimeOffset _lastAutomationAt = DateTimeOffset.MinValue;
     private PropStatusDto? _lastPropPayload;
+    private PropStatusDto? _lastPropRelayPayload;
     private MatchSnapshotDto? _lastSnapshotPayload;
     private double? _propTimerRemainingMs;
     private DateTimeOffset? _propTimerSyncedAt;
@@ -399,6 +400,7 @@ public sealed class MatchCoordinator : IDisposable
             _lastActionDescription = "Idle (no match data)";
             _focusAcquired = false;
             _lastPropPayload = null;
+            _lastPropRelayPayload = null;
             _lastSnapshotPayload = null;
             _propTimerRemainingMs = null;
             _propTimerSyncedAt = null;
@@ -515,7 +517,7 @@ public sealed class MatchCoordinator : IDisposable
         var players = _lastSnapshotPayload?.Players ?? Array.Empty<MatchPlayerSnapshotDto>();
         var teamPlayerCounts = BuildTeamPlayerCounts(players);
 
-        MatchSnapshotDto? matchRelayPayload = null;
+        MatchRelayDto? matchRelayPayload = null;
         var awaitingFinalData = false;
 
         var relayCandidate = _lastSnapshotPayload is not null
@@ -526,7 +528,7 @@ public sealed class MatchCoordinator : IDisposable
                 ? BuildLocalTerminalSnapshotLocked()
                 : null;
 
-        PropStatusDto? propRelayPayload = null;
+        PropStatusDto? propRelayPayload = _lastPropRelayPayload;
         CombinedRelayPayload? combinedRelayPayload = null;
 
         if (_relayService.IsEnabled && relayCandidate is not null)
@@ -572,13 +574,14 @@ public sealed class MatchCoordinator : IDisposable
                 }
                 else
                 {
-                    matchRelayPayload = relayCandidate;
-                    _ = _relayService.TryRelayMatchAsync(relayCandidate, CancellationToken.None);
+                    matchRelayPayload = ToMatchRelayPayload(relayCandidate);
+                    _ = _relayService.TryRelayMatchAsync(matchRelayPayload, CancellationToken.None);
                 }
             }
             else if (_relayService.CanRelayMatch && relayCandidate is null && _matchEnded && !awaitingFinalData)
             {
-                matchRelayPayload = BuildLocalTerminalSnapshotLocked();
+                var localTerminalSnapshot = BuildLocalTerminalSnapshotLocked();
+                matchRelayPayload = localTerminalSnapshot is not null ? ToMatchRelayPayload(localTerminalSnapshot) : null;
                 if (matchRelayPayload is not null)
                 {
                     _ = _relayService.TryRelayMatchAsync(matchRelayPayload, CancellationToken.None);
@@ -595,13 +598,15 @@ public sealed class MatchCoordinator : IDisposable
                     UptimeMs = _lastPropPayload.UptimeMs
                 };
 
+                _lastPropRelayPayload = propRelayPayload;
+
                 if (_relayService.CanRelayProp)
                 {
                     _ = _relayService.TryRelayPropAsync(propRelayPayload, CancellationToken.None);
                 }
             }
 
-            var combinedMatchPayload = matchRelayPayload ?? relayCandidate;
+            var combinedMatchPayload = matchRelayPayload ?? (relayCandidate is not null ? ToMatchRelayPayload(relayCandidate) : null);
             if (_relayService.CanRelayCombined && combinedMatchPayload is not null)
             {
                 combinedRelayPayload = new CombinedRelayPayload
@@ -614,7 +619,7 @@ public sealed class MatchCoordinator : IDisposable
             }
         }
 
-        matchRelayPayload ??= relayCandidate;
+        matchRelayPayload ??= relayCandidate is not null ? ToMatchRelayPayload(relayCandidate) : null;
 
         var snapshot = new MatchStateSnapshot(
             MatchId: _currentMatchId,
@@ -697,6 +702,20 @@ public sealed class MatchCoordinator : IDisposable
         return Math.Max(0, remainingMs);
     }
 
+    private static MatchRelayDto ToMatchRelayPayload(MatchSnapshotDto source)
+    {
+        return new MatchRelayDto
+        {
+            Match = source.Id,
+            Timestamp = source.Timestamp,
+            IsLastSend = source.IsLastSend,
+            Status = source.Status,
+            RemainingTimeMs = source.RemainingTimeMs,
+            WinnerTeam = source.WinnerTeam,
+            Players = source.Players
+        };
+    }
+
     private static IReadOnlyList<TeamPlayerCountSnapshot> BuildTeamPlayerCounts(IReadOnlyList<MatchPlayerSnapshotDto> players)
     {
         if (players.Count == 0)
@@ -746,6 +765,7 @@ public sealed class MatchCoordinator : IDisposable
         _lastActionDescription = "New match";
         _focusAcquired = false;
         _lastPropPayload = null;
+        _lastPropRelayPayload = null;
         _lastSnapshotPayload = null;
         _propLatencyWindow.Clear();
         _clockLatencyWindow.Clear();
