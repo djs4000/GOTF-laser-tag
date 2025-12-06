@@ -13,6 +13,10 @@ logs/
 # Visual Studio
 .vs/
 
+#ai
+.specify/
+.codex/
+
 # Publish output
 *.exe
 *.pdb
