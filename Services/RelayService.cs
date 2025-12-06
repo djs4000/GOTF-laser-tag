@@ -9,9 +9,9 @@ using Microsoft.Extensions.Options;
 namespace LaserTag.Defusal.Services;
 
 /// <summary>
-/// Forwards match state changes to an optional downstream relay endpoint.
+/// Forwards combined match+prop payloads to the downstream relay endpoint.
 /// </summary>
-public sealed class RelayService
+public sealed class RelayService : IRelayService
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<RelayService> _logger;
@@ -31,41 +31,45 @@ public sealed class RelayService
         _serializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false));
     }
 
-    public bool IsEnabled => _options.Enabled && (CanRelayMatch || CanRelayProp || CanRelayCombined);
+    public bool IsEnabled => _options.Enabled && !string.IsNullOrWhiteSpace(_options.Url);
 
-    public bool CanRelayMatch => !string.IsNullOrWhiteSpace(_options.MatchUrl ?? _options.Url);
-
-    public bool CanRelayProp => !string.IsNullOrWhiteSpace(_options.PropUrl ?? _options.Url);
-
-    public bool CanRelayCombined => !string.IsNullOrWhiteSpace(_options.Url);
-
-    public Task TryRelayAsync(object payload, CancellationToken cancellationToken)
+    public async Task TryRelayCombinedAsync(CombinedRelayPayload payload, CancellationToken cancellationToken)
     {
-        return TryRelayMatchAsync(payload, cancellationToken);
-    }
-
-    public async Task TryRelayMatchAsync(object payload, CancellationToken cancellationToken)
-    {
-        await RelayToUrlAsync(_options.MatchUrl ?? _options.Url, payload, cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task TryRelayPropAsync(object payload, CancellationToken cancellationToken)
-    {
-        await RelayToUrlAsync(_options.PropUrl ?? _options.Url, payload, cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task TryRelayCombinedAsync(object payload, CancellationToken cancellationToken)
-    {
-        await RelayToUrlAsync(_options.Url, payload, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task RelayToUrlAsync(string? url, object payload, CancellationToken cancellationToken)
-    {
-        if (!IsEnabled || string.IsNullOrWhiteSpace(url))
+        if (!IsEnabled)
         {
             return;
         }
 
+        ValidatePayload(payload);
+
+        await RelayToUrlAsync(_options.Url!, payload, cancellationToken).ConfigureAwait(false);
+    }
+
+    private void ValidatePayload(CombinedRelayPayload payload)
+    {
+        if (!_options.EnableSchemaValidation)
+        {
+            return;
+        }
+
+        if (payload.Match is null)
+        {
+            throw new InvalidOperationException("Combined relay payload must include match data.");
+        }
+
+        if (payload.Prop is null)
+        {
+            throw new InvalidOperationException("Combined relay payload must include prop data.");
+        }
+
+        if (payload.Match.Players is null)
+        {
+            throw new InvalidOperationException("Combined relay payload must populate match players (use empty array when absent).");
+        }
+    }
+
+    private async Task RelayToUrlAsync(string url, object payload, CancellationToken cancellationToken)
+    {
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, url);
@@ -76,6 +80,7 @@ public sealed class RelayService
 
             var json = JsonSerializer.Serialize(payload, _serializerOptions);
             request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+            _logger.LogInformation("Relaying combined payload to {Url}", url);
 
             var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
@@ -85,7 +90,7 @@ public sealed class RelayService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to relay match update");
+            _logger.LogError(ex, "Failed to relay combined payload");
         }
     }
 }

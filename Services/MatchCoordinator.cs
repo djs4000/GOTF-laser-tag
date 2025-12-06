@@ -17,7 +17,7 @@ public sealed class MatchCoordinator : IDisposable
 {
     private readonly ILogger<MatchCoordinator> _logger;
     private readonly MatchOptions _matchOptions;
-    private readonly RelayService _relayService;
+    private readonly IRelayService _relayService;
     private readonly IFocusService _focusService;
     private readonly UiAutomationOptions _uiAutomationOptions;
     private readonly TimeSynchronizationService _timeSyncService;
@@ -44,8 +44,9 @@ public sealed class MatchCoordinator : IDisposable
     private bool _focusAcquired;
     private DateTimeOffset _lastAutomationAt = DateTimeOffset.MinValue;
     private PropStatusDto? _lastPropPayload;
-    private PropStatusDto? _lastPropRelayPayload;
     private MatchSnapshotDto? _lastSnapshotPayload;
+    private string? _winnerTeam;
+    private WinnerReason? _winnerReason;
     private double? _propTimerRemainingMs;
     private DateTimeOffset? _propTimerSyncedAt;
     private string _attackingTeam = "Team 1";
@@ -88,7 +89,7 @@ public sealed class MatchCoordinator : IDisposable
 
     public MatchCoordinator(
         IOptions<MatchOptions> matchOptions,
-        RelayService relayService,
+        IRelayService relayService,
         IFocusService focusService,
         IOptions<UiAutomationOptions> uiAutomationOptions,
         TimeSynchronizationService timeSyncService,
@@ -149,7 +150,7 @@ public sealed class MatchCoordinator : IDisposable
 
             if (_lifecycleState is MatchLifecycleState.Idle or MatchLifecycleState.WaitingOnStart or MatchLifecycleState.Countdown)
             {
-                PublishSnapshotLocked("Prop update (inactive match)");
+                PublishSnapshotLocked("Prop update (inactive match)", eventTimestamp: normalizedTimestampMs);
                 return CurrentSnapshot;
             }
 
@@ -166,10 +167,13 @@ public sealed class MatchCoordinator : IDisposable
             {
                 shouldTriggerEnd = true;
                 triggerReason = incomingState == PropState.Defused ? "Prop defused" : "Prop detonated";
+                var winnerTeam = incomingState == PropState.Defused ? DefendingTeam : AttackingTeam;
+                var reason = incomingState == PropState.Defused ? WinnerReason.ObjectiveDefused : WinnerReason.ObjectiveDetonated;
+                SetWinnerLocked(winnerTeam, reason, triggerReason);
                 MarkMatchEndedLocked(triggerReason);
             }
 
-            PublishSnapshotLocked("Prop update");
+            PublishSnapshotLocked("Prop update", eventTimestamp: normalizedTimestampMs);
         }
 
         if (shouldTriggerEnd)
@@ -278,6 +282,8 @@ public sealed class MatchCoordinator : IDisposable
                 _lastElapsedSec = 0;
             }
 
+            TryResolveHostWinnerLocked(dto);
+
             switch (dto.Status)
             {
                 case MatchSnapshotStatus.WaitingOnStart:
@@ -329,7 +335,7 @@ public sealed class MatchCoordinator : IDisposable
                 _matchEnded = true;
             }
 
-            PublishSnapshotLocked("Match update");
+            PublishSnapshotLocked("Match update", eventTimestamp: dto.Timestamp);
         }
 
         if (shouldTriggerEnd)
@@ -400,12 +406,13 @@ public sealed class MatchCoordinator : IDisposable
             _lastActionDescription = "Idle (no match data)";
             _focusAcquired = false;
             _lastPropPayload = null;
-            _lastPropRelayPayload = null;
-            _lastSnapshotPayload = null;
-            _propTimerRemainingMs = null;
-            _propTimerSyncedAt = null;
-            PublishSnapshotLocked("Idle state");
-        }
+        _lastSnapshotPayload = null;
+        _propTimerRemainingMs = null;
+        _propTimerSyncedAt = null;
+        _winnerTeam = null;
+        _winnerReason = null;
+        PublishSnapshotLocked("Idle state");
+    }
     }
 
     /// <summary>
@@ -441,6 +448,7 @@ public sealed class MatchCoordinator : IDisposable
         {
             shouldTriggerEnd = true;
             triggerReason = $"No plant by {_matchOptions.AutoEndNoPlantAtSec}s";
+            SetWinnerLocked(DefendingTeam, WinnerReason.TimeExpiration, triggerReason);
             MarkMatchEndedLocked(triggerReason);
             return;
         }
@@ -452,9 +460,30 @@ public sealed class MatchCoordinator : IDisposable
             {
                 shouldTriggerEnd = true;
                 triggerReason = "Bomb overtime expired";
+                SetWinnerLocked(AttackingTeam, WinnerReason.ObjectiveDetonated, triggerReason);
                 MarkMatchEndedLocked(triggerReason);
             }
         }
+    }
+
+    private void TryResolveHostWinnerLocked(MatchSnapshotDto dto)
+    {
+        if (_winnerReason is not null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(dto.WinnerTeam))
+        {
+            return;
+        }
+
+        if (dto.Status != MatchSnapshotStatus.Completed)
+        {
+            return;
+        }
+
+        SetWinnerLocked(dto.WinnerTeam!, WinnerReason.HostTeamWipe, "Host completed with winner");
     }
 
     private void MarkMatchEndedLocked(string reason)
@@ -472,6 +501,148 @@ public sealed class MatchCoordinator : IDisposable
         }
 
         _lastActionDescription = $"Ended: {reason}";
+    }
+
+    private CombinedRelayPayload BuildCombinedPayloadLocked(bool forceRelay, long? eventTimestamp)
+    {
+        var matchPayload = BuildRelayMatchSnapshotLocked(forceRelay);
+        var propPayload = BuildRelayPropSnapshotLocked(matchPayload.Timestamp);
+        var timestamp = ResolveRelayTimestamp(eventTimestamp, matchPayload.Timestamp, propPayload.Timestamp);
+
+        return new CombinedRelayPayload
+        {
+            Timestamp = timestamp,
+            WinnerTeam = _winnerTeam ?? matchPayload.WinnerTeam,
+            WinnerReason = _winnerReason,
+            Match = matchPayload,
+            Prop = propPayload
+        };
+    }
+
+    private MatchSnapshotDto BuildRelayMatchSnapshotLocked(bool forceRelay)
+    {
+        if (_lastSnapshotPayload is { } snapshot)
+        {
+            var timestamp = snapshot.Timestamp != 0
+                ? snapshot.Timestamp
+                : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var status = snapshot.Status;
+            var isLastSend = snapshot.IsLastSend || (forceRelay && IsTerminalStatus(status));
+
+            return new MatchSnapshotDto
+            {
+                Id = snapshot.Id,
+                Timestamp = timestamp,
+                IsLastSend = isLastSend,
+                Status = status,
+                RemainingTimeMs = snapshot.RemainingTimeMs,
+                WinnerTeam = _winnerTeam ?? snapshot.WinnerTeam,
+                Players = snapshot.Players ?? Array.Empty<MatchPlayerSnapshotDto>()
+            };
+        }
+
+        var fallbackId = _currentMatchId ?? "pending";
+        var fallbackTimestamp = _lastSnapshotTimestamp != 0
+            ? _lastSnapshotTimestamp
+            : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var fallbackRemaining = _lastMatchRemainingMs ?? (int)(_matchOptions.LtDisplayedDurationSec * 1000);
+
+        return new MatchSnapshotDto
+        {
+            Id = fallbackId,
+            Timestamp = fallbackTimestamp,
+            IsLastSend = forceRelay && _matchEnded,
+            Status = MapLifecycleToSnapshotStatus(_lifecycleState),
+            RemainingTimeMs = fallbackRemaining,
+            WinnerTeam = _winnerTeam,
+            Players = Array.Empty<MatchPlayerSnapshotDto>()
+        };
+    }
+
+    private PropStatusDto BuildRelayPropSnapshotLocked(long fallbackTimestamp)
+    {
+        if (_lastPropPayload is { } prop)
+        {
+            var timestamp = prop.Timestamp != 0 ? prop.Timestamp : fallbackTimestamp;
+            return new PropStatusDto
+            {
+                Timestamp = timestamp,
+                State = prop.State,
+                TimerMs = prop.TimerMs,
+                UptimeMs = prop.UptimeMs ?? 0
+            };
+        }
+
+        var timestampFallback = _lastPropTimestamp != 0
+            ? _lastPropTimestamp
+            : fallbackTimestamp != 0
+                ? fallbackTimestamp
+                : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        int? timer = null;
+        if (_propTimerRemainingMs is not null)
+        {
+            timer = (int)Math.Max(0, Math.Round(_propTimerRemainingMs.Value));
+        }
+
+        return new PropStatusDto
+        {
+            Timestamp = timestampFallback,
+            State = _propState,
+            TimerMs = timer,
+            UptimeMs = 0
+        };
+    }
+
+    private static long ResolveRelayTimestamp(long? candidate, long matchTimestamp, long propTimestamp)
+    {
+        if (candidate.HasValue && candidate.Value != 0)
+        {
+            return candidate.Value;
+        }
+
+        if (matchTimestamp != 0)
+        {
+            return matchTimestamp;
+        }
+
+        if (propTimestamp != 0)
+        {
+            return propTimestamp;
+        }
+
+        return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    }
+
+    private static MatchSnapshotStatus MapLifecycleToSnapshotStatus(MatchLifecycleState state)
+    {
+        return state switch
+        {
+            MatchLifecycleState.Countdown => MatchSnapshotStatus.Countdown,
+            MatchLifecycleState.Running => MatchSnapshotStatus.Running,
+            MatchLifecycleState.WaitingOnFinalData => MatchSnapshotStatus.WaitingOnFinalData,
+            MatchLifecycleState.Completed => MatchSnapshotStatus.Completed,
+            MatchLifecycleState.Cancelled => MatchSnapshotStatus.Cancelled,
+            _ => MatchSnapshotStatus.WaitingOnStart
+        };
+    }
+
+    private void SetWinnerLocked(string winnerTeam, WinnerReason reason, string context)
+    {
+        if (_winnerReason is not null)
+        {
+            _logger.LogDebug(
+                "Winner already resolved to {Winner} via {Reason}; ignoring {Context}",
+                _winnerTeam ?? "<unknown>",
+                _winnerReason,
+                context);
+            return;
+        }
+
+        _winnerTeam = winnerTeam;
+        _winnerReason = reason;
+        var contextLabel = string.IsNullOrWhiteSpace(context) ? "unspecified" : context;
+        _logger.LogInformation("Winner resolved to {Winner} via {Reason} ({Context})", winnerTeam, reason, contextLabel);
     }
 
     private string? GetExpectedWinner()
@@ -502,7 +673,7 @@ public sealed class MatchCoordinator : IDisposable
         return null;
     }
 
-    private void PublishSnapshotLocked(string source, bool forceRelay = false)
+    private void PublishSnapshotLocked(string source, bool forceRelay = false, long? eventTimestamp = null)
     {
         var now = DateTimeOffset.UtcNow;
         var overtimeActive = _plantTimeSec is not null && _plantTimeSec.Value >= _matchOptions.AutoEndNoPlantAtSec && !_matchEnded;
@@ -513,113 +684,14 @@ public sealed class MatchCoordinator : IDisposable
         }
 
         var propTimerRemainingMs = GetPropTimerRemainingMs(now);
-
         var players = _lastSnapshotPayload?.Players ?? Array.Empty<MatchPlayerSnapshotDto>();
         var teamPlayerCounts = BuildTeamPlayerCounts(players);
 
-        MatchRelayDto? matchRelayPayload = null;
-        var awaitingFinalData = false;
-
-        var relayCandidate = _lastSnapshotPayload is not null
-            ? _matchEnded && !IsTerminalStatus(_lastSnapshotPayload.Status)
-                ? BuildLocalTerminalSnapshotLocked()
-                : _lastSnapshotPayload
-            : _matchEnded
-                ? BuildLocalTerminalSnapshotLocked()
-                : null;
-
-        PropStatusDto? propRelayPayload = _lastPropRelayPayload;
-        CombinedRelayPayload? combinedRelayPayload = null;
-
-        if (_relayService.IsEnabled && relayCandidate is not null)
-        {
-            var expectedWinner = GetExpectedWinner();
-            var isWinnerMismatch = !string.IsNullOrWhiteSpace(expectedWinner)
-                && !string.Equals(relayCandidate.WinnerTeam, expectedWinner, StringComparison.Ordinal);
-
-            MatchSnapshotDto ApplyWinner(MatchSnapshotDto source, string? winner) => new MatchSnapshotDto
-            {
-                Id = source.Id,
-                Timestamp = source.Timestamp,
-                IsLastSend = source.IsLastSend,
-                Status = source.Status,
-                RemainingTimeMs = source.RemainingTimeMs,
-                WinnerTeam = winner,
-                Players = source.Players
-            };
-
-            if (expectedWinner is not null && relayCandidate.Status == MatchSnapshotStatus.WaitingOnFinalData)
-            {
-                awaitingFinalData = true;
-                relayCandidate = ApplyWinner(relayCandidate, expectedWinner);
-            }
-            else if (isWinnerMismatch)
-            {
-                relayCandidate = ApplyWinner(relayCandidate, expectedWinner);
-            }
-        }
-
+        var combinedRelayPayload = BuildCombinedPayloadLocked(forceRelay, eventTimestamp);
         if (_relayService.IsEnabled)
         {
-            if (_relayService.CanRelayMatch && relayCandidate is not null)
-            {
-                var shouldHoldFinalData = relayCandidate.Status == MatchSnapshotStatus.Completed
-                    && !relayCandidate.IsLastSend
-                    && !forceRelay;
-
-                if (shouldHoldFinalData)
-                {
-                    _logger.LogDebug("Buffering relay waiting for final data");
-                    matchRelayPayload = null;
-                }
-                else
-                {
-                    matchRelayPayload = ToMatchRelayPayload(relayCandidate);
-                    _ = _relayService.TryRelayMatchAsync(matchRelayPayload, CancellationToken.None);
-                }
-            }
-            else if (_relayService.CanRelayMatch && relayCandidate is null && _matchEnded && !awaitingFinalData)
-            {
-                var localTerminalSnapshot = BuildLocalTerminalSnapshotLocked();
-                matchRelayPayload = localTerminalSnapshot is not null ? ToMatchRelayPayload(localTerminalSnapshot) : null;
-                if (matchRelayPayload is not null)
-                {
-                    _ = _relayService.TryRelayMatchAsync(matchRelayPayload, CancellationToken.None);
-                }
-            }
-
-            if ((_relayService.CanRelayProp || _relayService.CanRelayCombined) && _lastPropPayload is not null)
-            {
-                propRelayPayload = new PropStatusDto
-                {
-                    Timestamp = _lastPropPayload.Timestamp,
-                    State = _lastPropPayload.State,
-                    TimerMs = _lastPropPayload.TimerMs,
-                    UptimeMs = _lastPropPayload.UptimeMs
-                };
-
-                _lastPropRelayPayload = propRelayPayload;
-
-                if (_relayService.CanRelayProp)
-                {
-                    _ = _relayService.TryRelayPropAsync(propRelayPayload, CancellationToken.None);
-                }
-            }
-
-            var combinedMatchPayload = matchRelayPayload ?? (relayCandidate is not null ? ToMatchRelayPayload(relayCandidate) : null);
-            if (_relayService.CanRelayCombined && combinedMatchPayload is not null)
-            {
-                combinedRelayPayload = new CombinedRelayPayload
-                {
-                    Match = combinedMatchPayload,
-                    Prop = propRelayPayload
-                };
-
-                _ = _relayService.TryRelayCombinedAsync(combinedRelayPayload, CancellationToken.None);
-            }
+            _ = _relayService.TryRelayCombinedAsync(combinedRelayPayload, CancellationToken.None);
         }
-
-        matchRelayPayload ??= relayCandidate is not null ? ToMatchRelayPayload(relayCandidate) : null;
 
         var snapshot = new MatchStateSnapshot(
             MatchId: _currentMatchId,
@@ -639,50 +711,18 @@ public sealed class MatchCoordinator : IDisposable
             FocusAcquired: _focusAcquired,
             Players: players,
             TeamPlayerCounts: teamPlayerCounts,
-            LatestRelayPayload: matchRelayPayload,
+            WinnerTeam: combinedRelayPayload.WinnerTeam ?? _winnerTeam,
+            WinnerReason: combinedRelayPayload.WinnerReason ?? _winnerReason,
             LatestCombinedRelayPayload: combinedRelayPayload);
 
         CurrentSnapshot = snapshot;
         SnapshotUpdated?.Invoke(this, snapshot);
 
-        _logger.LogDebug("State updated via {Source}: {@Snapshot}", source, snapshot);
-    }
-
-    private MatchSnapshotDto? BuildLocalTerminalSnapshotLocked()
-    {
-        if (_currentMatchId is null)
-        {
-            return null;
-        }
-
-        var expectedWinner = GetExpectedWinner();
-        var basePayload = _lastSnapshotPayload;
-        var status = basePayload?.Status ?? MatchSnapshotStatus.Running;
-
-        if (!IsTerminalStatus(status))
-        {
-            status = MatchSnapshotStatus.Completed;
-        }
-
-        var timestamp = basePayload?.Timestamp
-            ?? (_lastSnapshotTimestamp != 0
-                ? _lastSnapshotTimestamp
-                : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-
-        var remainingTime = basePayload?.RemainingTimeMs ?? _lastMatchRemainingMs ?? 0;
-        var players = basePayload?.Players ?? Array.Empty<MatchPlayerSnapshotDto>();
-        var winner = !string.IsNullOrWhiteSpace(expectedWinner) ? expectedWinner : basePayload?.WinnerTeam;
-
-        return new MatchSnapshotDto
-        {
-            Id = _currentMatchId,
-            Timestamp = timestamp,
-            IsLastSend = true,
-            Status = status,
-            RemainingTimeMs = remainingTime,
-            WinnerTeam = winner,
-            Players = players
-        };
+        _logger.LogDebug(
+            "State updated via {Source}: winner={Winner} reason={Reason}",
+            source,
+            snapshot.WinnerTeam ?? "<pending>",
+            snapshot.WinnerReason?.ToString() ?? "<none>");
     }
 
     private double? GetPropTimerRemainingMs(DateTimeOffset now)
@@ -700,20 +740,6 @@ public sealed class MatchCoordinator : IDisposable
         var elapsedMs = (now - _propTimerSyncedAt.Value).TotalMilliseconds;
         var remainingMs = _propTimerRemainingMs.Value - elapsedMs;
         return Math.Max(0, remainingMs);
-    }
-
-    private static MatchRelayDto ToMatchRelayPayload(MatchSnapshotDto source)
-    {
-        return new MatchRelayDto
-        {
-            Match = source.Id,
-            Timestamp = source.Timestamp,
-            IsLastSend = source.IsLastSend,
-            Status = source.Status,
-            RemainingTimeMs = source.RemainingTimeMs,
-            WinnerTeam = source.WinnerTeam,
-            Players = source.Players
-        };
     }
 
     private static IReadOnlyList<TeamPlayerCountSnapshot> BuildTeamPlayerCounts(IReadOnlyList<MatchPlayerSnapshotDto> players)
@@ -765,7 +791,6 @@ public sealed class MatchCoordinator : IDisposable
         _lastActionDescription = "New match";
         _focusAcquired = false;
         _lastPropPayload = null;
-        _lastPropRelayPayload = null;
         _lastSnapshotPayload = null;
         _propLatencyWindow.Clear();
         _clockLatencyWindow.Clear();
@@ -775,6 +800,8 @@ public sealed class MatchCoordinator : IDisposable
         _clockLatency = null;
         _propTimerRemainingMs = null;
         _propTimerSyncedAt = null;
+        _winnerTeam = null;
+        _winnerReason = null;
         CancelFinalDataTimeoutLocked();
     }
 

@@ -1,0 +1,12 @@
+namespace LaserTag.Defusal.Domain;
+
+/// <summary>
+/// Identifies which authority resolved the winner for the relay payload.
+/// </summary>
+public enum WinnerReason
+{
+    HostTeamWipe,
+    ObjectiveDetonated,
+    ObjectiveDefused,
+    TimeExpiration
+}
