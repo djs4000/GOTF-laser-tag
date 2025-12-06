@@ -67,7 +67,7 @@ Support engineers require a way to send curated test payloads to the downstream 
 - **FR-001**: The main application window MUST include a toolbar that is always visible and contains buttons for Settings, Relay Monitor, and Debugging; buttons must be reachable via mouse and keyboard shortcuts to preserve accessibility.
 - **FR-002**: The Settings toolbar button MUST open a dedicated form that surfaces every section and property from `appsettings.json`, grouping related values (Http, Relay, Match, Preflight, UiAutomation, Diagnostics, etc.) with descriptive labels and helper text.
 - **FR-003**: The Settings form MUST load current configuration values on open, validate inputs inline using the same constraints enforced by runtime options, and prevent saving when a value would violate AGENTS.md requirements (e.g., invalid CIDR or timer length).
-- **FR-004**: Saving from the Settings form MUST persist changes to the configuration store used at runtime, show success/failure feedback, and ensure updates take effect without manual file editing; if a restart is required, the UI must clearly prompt for it.
+- **FR-004**: Saving from the Settings form MUST persist changes to the configuration store used at runtime, show success/failure feedback, and apply updates immediately whenever the underlying subsystem supports hot reload. For sections that cannot be reloaded safely (e.g., HTTP binding changes), the UI must clearly prompt for a targeted restart requirement rather than forcing a blanket restart.
 - **FR-005**: Operators MUST be able to cancel edits or reset a section to its last persisted value without affecting other sections.
 - **FR-006**: The Preflight panel MUST stop performing the match length check prior to the host supplying duration data, removing any blocking warnings tied to that check while keeping team/player validations intact.
 - **FR-007**: The Relay Monitor MUST present the latest combined payload in a stable JSON layout divided into Match and Prop panels, updating individual value fields whenever new data arrives and indicating the timestamp of the last payload.
@@ -98,3 +98,9 @@ Support engineers require a way to send curated test payloads to the downstream 
 - Configuration edits made through the Settings form are persisted to the same location and format currently used by the application (no alternate storage is introduced).
 - Relay Monitor and Debugging panels rely on existing relay authentication/token configuration; no new credential prompts are required beyond what already exists.
 - Real-time updates use existing state buffering within the coordinator, so no additional network subscriptions are necessary.
+
+## Clarifications
+
+### Session 2025-12-07
+
+- Q: How should the application handle settings changes that might require a restart? → A: Apply edits live, but prompt for restart only for sections that cannot hot-reload safely (e.g., HTTP bindings).
