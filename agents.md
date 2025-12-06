@@ -1,4 +1,4 @@
-# **AGENTS.md**
+﻿# **AGENTS.md**
 
 **Project**: Laser Tag Defusal Mode Orchestrator (Windows)
 

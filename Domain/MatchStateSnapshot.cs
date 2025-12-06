@@ -24,7 +24,8 @@ public sealed record MatchStateSnapshot(
     bool FocusAcquired,
     IReadOnlyList<MatchPlayerSnapshotDto> Players,
     IReadOnlyList<TeamPlayerCountSnapshot> TeamPlayerCounts,
-    MatchRelayDto? LatestRelayPayload,
+    string? WinnerTeam,
+    WinnerReason? WinnerReason,
     CombinedRelayPayload? LatestCombinedRelayPayload)
 {
     public static readonly MatchStateSnapshot Default = new(
@@ -45,7 +46,8 @@ public sealed record MatchStateSnapshot(
         FocusAcquired: false,
         Players: Array.Empty<MatchPlayerSnapshotDto>(),
         TeamPlayerCounts: Array.Empty<TeamPlayerCountSnapshot>(),
-        LatestRelayPayload: null,
+        WinnerTeam: null,
+        WinnerReason: null,
         LatestCombinedRelayPayload: null);
 }
 

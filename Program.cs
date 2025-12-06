@@ -66,7 +66,7 @@ internal static class Program
         });
 
         builder.Services.AddSingleton<CidrAllowlistService>();
-        builder.Services.AddSingleton<RelayService>();
+        builder.Services.AddSingleton<IRelayService, RelayService>();
         builder.Services.AddSingleton<TimeSynchronizationService>();
         builder.Services.AddSingleton<MatchCoordinator>();
         builder.Services.AddSingleton<IFocusService, FocusService>();

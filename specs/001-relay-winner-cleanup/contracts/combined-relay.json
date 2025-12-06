@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CombinedRelayPayload",
+  "type": "object",
+  "required": ["match", "prop", "timestamp"],
+  "properties": {
+    "timestamp": {
+      "type": "integer",
+      "description": "Source event timestamp that triggered this relay payload."
+    },
+    "winner_team": {
+      "type": ["string", "null"],
+      "description": "Attackers or defenders. Null until resolved."
+    },
+    "winner_reason": {
+      "type": ["string", "null"],
+      "enum": ["HostTeamWipe", "ObjectiveDetonated", "ObjectiveDefused", "TimeExpiration", null],
+      "description": "Authority that determined the winner."
+    },
+    "match": {
+      "type": "object",
+      "required": ["id", "status", "is_last_send"],
+      "properties": {
+        "id": { "type": "string" },
+        "status": { "type": "string" },
+        "remaining_time_ms": { "type": ["integer", "null"] },
+        "winner_team": { "type": ["string", "null"] },
+        "is_last_send": { "type": "boolean" },
+        "players": {
+          "type": ["array", "null"],
+          "items": { "type": "object" }
+        }
+      },
+      "additionalProperties": true
+    },
+    "prop": {
+      "type": "object",
+      "required": ["state", "timestamp", "uptime_ms"],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["armed", "planted", "defusing", "defused", "exploded"]
+        },
+        "timestamp": { "type": "integer" },
+        "uptime_ms": { "type": "integer" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

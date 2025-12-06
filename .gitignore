@@ -30,3 +30,14 @@ _ReSharper.Caches/
 # Other
 TestResults/
 *.cache
+packages/
+
+# Editors
+.vscode/
+.idea/
+
+# OS junk
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp

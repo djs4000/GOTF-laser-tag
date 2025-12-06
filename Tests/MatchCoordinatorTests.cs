@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using LaserTag.Defusal.Domain;
@@ -11,7 +12,7 @@ namespace LaserTag.Defusal.Tests;
 
 public class MatchCoordinatorTests
 {
-    private static (MatchCoordinator Coordinator, FakeFocusService Focus) CreateCoordinator(MatchOptions? matchOptions = null)
+    private static (MatchCoordinator Coordinator, FakeFocusService Focus, TestRelayService Relay) CreateCoordinator(MatchOptions? matchOptions = null)
     {
         matchOptions ??= new MatchOptions
         {
@@ -22,7 +23,7 @@ public class MatchCoordinatorTests
         };
 
         var focus = new FakeFocusService();
-        var relay = new RelayService(Options.Create(new RelayOptions { Enabled = false }), NullLogger<RelayService>.Instance);
+        var relay = new TestRelayService();
         var timeSync = new TimeSynchronizationService(Options.Create(matchOptions), NullLogger<TimeSynchronizationService>.Instance);
         var coordinator = new MatchCoordinator(
             Options.Create(matchOptions),
@@ -32,13 +33,13 @@ public class MatchCoordinatorTests
             timeSync,
             NullLogger<MatchCoordinator>.Instance);
 
-        return (coordinator, focus);
+        return (coordinator, focus, relay);
     }
 
     [Fact]
     public async Task NoPlantByAutoEnd_TriggersEndMatch()
     {
-        var (coordinator, focus) = CreateCoordinator();
+        var (coordinator, focus, _) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.WaitingOnStart, 400_000, 1), CancellationToken.None);
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Running, 220_000, 2), CancellationToken.None);
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Running, (400 - 180) * 1000, 3), CancellationToken.None);
@@ -50,7 +51,7 @@ public class MatchCoordinatorTests
     [Fact]
     public async Task PlantAfter180_AllowsOvertimeAndEndsAfterWindow()
     {
-        var (coordinator, focus) = CreateCoordinator();
+        var (coordinator, focus, _) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Countdown, 400_000, 1), CancellationToken.None);
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, (400 - 181) * 1000, 2), CancellationToken.None);
         await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 3 }, CancellationToken.None);
@@ -70,7 +71,7 @@ public class MatchCoordinatorTests
     [InlineData(PropState.Detonated, "detonated")]
     public async Task TerminalPropStatesEndImmediately(PropState propState, string expected)
     {
-        var (coordinator, focus) = CreateCoordinator();
+        var (coordinator, focus, _) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, (400 - 100) * 1000, 1), CancellationToken.None);
         await coordinator.UpdatePropAsync(new PropStatusDto { State = propState, Timestamp = 2 }, CancellationToken.None);
 
@@ -81,7 +82,7 @@ public class MatchCoordinatorTests
     [Fact]
     public async Task FreezetimeIgnoresPropUpdates()
     {
-        var (coordinator, focus) = CreateCoordinator();
+        var (coordinator, focus, _) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.WaitingOnStart, 400_000, 1), CancellationToken.None);
         await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 2 }, CancellationToken.None);
         Assert.Equal(0, focus.TriggerCount);
@@ -90,7 +91,7 @@ public class MatchCoordinatorTests
     [Fact]
     public async Task PropStateIsCapturedForDisplayWhileInactive()
     {
-        var (coordinator, focus) = CreateCoordinator();
+        var (coordinator, focus, _) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.WaitingOnStart, 400_000, 1), CancellationToken.None);
         await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 2 }, CancellationToken.None);
 
@@ -102,7 +103,7 @@ public class MatchCoordinatorTests
     [Fact]
     public async Task GameoverLocksOutFurtherActions()
     {
-        var (coordinator, focus) = CreateCoordinator();
+        var (coordinator, focus, _) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, (400 - 190) * 1000, 1), CancellationToken.None);
         await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Detonated, Timestamp = 2 }, CancellationToken.None);
         Assert.Equal(1, focus.TriggerCount);
@@ -115,7 +116,7 @@ public class MatchCoordinatorTests
     [Fact]
     public async Task RemainingTimeConversionProducesExpectedElapsed()
     {
-        var (coordinator, _) = CreateCoordinator();
+        var (coordinator, _, _) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, (400 - 123) * 1000, 1), CancellationToken.None);
         await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 2 }, CancellationToken.None);
         var snapshot = coordinator.Snapshot();
@@ -125,7 +126,7 @@ public class MatchCoordinatorTests
     [Fact]
     public async Task BuildPropResponseReflectsLatestMatchStatus()
     {
-        var (coordinator, _) = CreateCoordinator();
+        var (coordinator, _, _) = CreateCoordinator();
         const int secondsFromEpoch = 10;
         var matchTimestamp = DateTimeOffset.UnixEpoch.AddSeconds(secondsFromEpoch).UtcDateTime.Ticks;
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, secondsFromEpoch), CancellationToken.None);
@@ -139,9 +140,67 @@ public class MatchCoordinatorTests
     }
 
     [Fact]
+    public async Task PropUpdatesIncludeLatestMatchSnapshotInCombinedPayload()
+    {
+        var (coordinator, _, relay) = CreateCoordinator();
+        relay.IsEnabled = true;
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Running, 200_000, 1), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 2 }, CancellationToken.None);
+
+        Assert.NotEmpty(relay.Payloads);
+        var payload = relay.Payloads[^1];
+        Assert.Equal("alpha", payload.Match.Id);
+        Assert.Equal(PropState.Armed, payload.Prop.State);
+    }
+
+    [Fact]
+    public async Task MatchUpdatesIncludeBufferedPropState()
+    {
+        var (coordinator, _, relay) = CreateCoordinator();
+        relay.IsEnabled = true;
+
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 1 }, CancellationToken.None);
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("bravo", MatchSnapshotStatus.Running, 199_000, 2), CancellationToken.None);
+
+        Assert.NotEmpty(relay.Payloads);
+        var payload = relay.Payloads[^1];
+        Assert.Equal("bravo", payload.Match.Id);
+        Assert.Equal(PropState.Armed, payload.Prop.State);
+    }
+
+    [Fact]
+    public async Task PropOnlyUpdatesStillIncludeMatchDefaults()
+    {
+        var (coordinator, _, relay) = CreateCoordinator();
+        relay.IsEnabled = true;
+
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 1 }, CancellationToken.None);
+
+        Assert.NotEmpty(relay.Payloads);
+        var payload = relay.Payloads[^1];
+        Assert.False(string.IsNullOrWhiteSpace(payload.Match.Id));
+        Assert.NotNull(payload.Match);
+    }
+
+    [Fact]
+    public async Task MatchOnlyUpdatesStillIncludePropDefaults()
+    {
+        var (coordinator, _, relay) = CreateCoordinator();
+        relay.IsEnabled = true;
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("charlie", MatchSnapshotStatus.Running, 200_000, 1), CancellationToken.None);
+
+        Assert.NotEmpty(relay.Payloads);
+        var payload = relay.Payloads[^1];
+        Assert.NotNull(payload.Prop);
+        Assert.Equal("charlie", payload.Match.Id);
+    }
+
+    [Fact]
     public async Task IgnoresUnexpectedMatchIdWhileActive()
     {
-        var (coordinator, _) = CreateCoordinator();
+        var (coordinator, _, _) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Running, 200_000, 1), CancellationToken.None);
 
         // Incoming snapshot claims a different match id but represents a running game; it should be ignored.
@@ -156,7 +215,7 @@ public class MatchCoordinatorTests
     [Fact]
     public async Task MaintainsPropStateDuringWaitingOnStartSnapshots()
     {
-        var (coordinator, _) = CreateCoordinator();
+        var (coordinator, _, _) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.WaitingOnStart, 400_000, 1), CancellationToken.None);
         await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Ready, Timestamp = 2 }, CancellationToken.None);
 
@@ -178,7 +237,7 @@ public class MatchCoordinatorTests
             ClockExpectedHz = 10,
             LatencyWindow = 1
         };
-        var (coordinator, _) = CreateCoordinator(options);
+        var (coordinator, _, _) = CreateCoordinator(options);
         var unixSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var dto = new MatchSnapshotDto
         {
@@ -212,7 +271,7 @@ public class MatchCoordinatorTests
             ClockExpectedHz = 10,
             LatencyWindow = 1
         };
-        var (coordinator, _) = CreateCoordinator(options);
+        var (coordinator, _, _) = CreateCoordinator(options);
         var futureTimestamp = DateTimeOffset.UtcNow.AddSeconds(2).ToUnixTimeMilliseconds();
         var dto = new MatchSnapshotDto
         {
@@ -245,7 +304,7 @@ public class MatchCoordinatorTests
             ClockExpectedHz = 10,
             LatencyWindow = 1
         };
-        var (coordinator, _) = CreateCoordinator(options);
+        var (coordinator, _, _) = CreateCoordinator(options);
         var propTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, propTimestamp), CancellationToken.None);
@@ -271,7 +330,7 @@ public class MatchCoordinatorTests
             ClockExpectedHz = 10,
             LatencyWindow = 1
         };
-        var (coordinator, _) = CreateCoordinator(options);
+        var (coordinator, _, _) = CreateCoordinator(options);
         var futureTimestamp = DateTimeOffset.UtcNow.AddSeconds(2).ToUnixTimeMilliseconds();
 
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, DateTimeOffset.UtcNow.ToUnixTimeSeconds()), CancellationToken.None);
@@ -296,7 +355,7 @@ public class MatchCoordinatorTests
             ClockExpectedHz = 10,
             LatencyWindow = 3
         };
-        var (coordinator, _) = CreateCoordinator(options);
+        var (coordinator, _, _) = CreateCoordinator(options);
 
         var baseTimestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
@@ -316,7 +375,7 @@ public class MatchCoordinatorTests
     [Fact]
     public async Task PropTimerCountsDownBetweenUpdates()
     {
-        var (coordinator, _) = CreateCoordinator();
+        var (coordinator, _, _) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, 1), CancellationToken.None);
 
         await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 2, TimerMs = 40_000 }, CancellationToken.None);
@@ -338,7 +397,7 @@ public class MatchCoordinatorTests
     [Fact]
     public async Task PropTimerStaysFrozenWhenNotArmed()
     {
-        var (coordinator, _) = CreateCoordinator();
+        var (coordinator, _, _) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 200_000, 1), CancellationToken.None);
 
         await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Active, Timestamp = 2, TimerMs = 30_000 }, CancellationToken.None);
@@ -359,7 +418,7 @@ public class MatchCoordinatorTests
     [Fact]
     public async Task AllowsNewMatchAfterTerminalState()
     {
-        var (coordinator, _) = CreateCoordinator();
+        var (coordinator, _, _) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Completed, 0, 1), CancellationToken.None);
 
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("beta", MatchSnapshotStatus.WaitingOnStart, 400_000, 2), CancellationToken.None);
@@ -370,7 +429,68 @@ public class MatchCoordinatorTests
         Assert.Equal(400_000, snapshot.RemainingTimeMs);
     }
 
-    private static MatchSnapshotDto NewSnapshot(string id, MatchSnapshotStatus status, int remainingMs, long secondsFromEpoch)
+    [Fact]
+    public async Task HostWinnerBeforeObjectiveIsRespected()
+    {
+        var (coordinator, _, _) = CreateCoordinator();
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Running, 200_000, 1), CancellationToken.None);
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Completed, 0, 2, winnerTeam: "Team 2"), CancellationToken.None);
+
+        var snapshot = coordinator.Snapshot();
+        Assert.Equal("Team 2", snapshot.WinnerTeam);
+        Assert.Equal(WinnerReason.HostTeamWipe, snapshot.WinnerReason);
+    }
+
+    [Fact]
+    public async Task ObjectiveOutcomeOverridesLaterHostWinner()
+    {
+        var (coordinator, _, _) = CreateCoordinator();
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Running, 200_000, 1), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Detonated, Timestamp = 2 }, CancellationToken.None);
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Completed, 0, 3, winnerTeam: "Team 2"), CancellationToken.None);
+
+        var snapshot = coordinator.Snapshot();
+        Assert.Equal("Team 1", snapshot.WinnerTeam); // Default attacking team
+        Assert.Equal(WinnerReason.ObjectiveDetonated, snapshot.WinnerReason);
+    }
+
+    [Fact]
+    public async Task NoPlantTimeoutAwardsDefenders()
+    {
+        var (coordinator, _, _) = CreateCoordinator();
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Running, (400 - 100) * 1000, 1), CancellationToken.None);
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Running, (400 - 181) * 1000, 2), CancellationToken.None);
+
+        var snapshot = coordinator.Snapshot();
+        Assert.Equal("Team 2", snapshot.WinnerTeam);
+        Assert.Equal(WinnerReason.TimeExpiration, snapshot.WinnerReason);
+    }
+
+    [Fact]
+    public async Task PropDefuseSetsWinnerReason()
+    {
+        var (coordinator, _, _) = CreateCoordinator();
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Running, (400 - 10) * 1000, 1), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Defused, Timestamp = 2 }, CancellationToken.None);
+
+        var snapshot = coordinator.Snapshot();
+        Assert.Equal("Team 2", snapshot.WinnerTeam);
+        Assert.Equal(WinnerReason.ObjectiveDefused, snapshot.WinnerReason);
+    }
+
+    [Fact]
+    public async Task PropDetonationSetsWinnerReason()
+    {
+        var (coordinator, _, _) = CreateCoordinator();
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Running, (400 - 10) * 1000, 1), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Detonated, Timestamp = 2 }, CancellationToken.None);
+
+        var snapshot = coordinator.Snapshot();
+        Assert.Equal("Team 1", snapshot.WinnerTeam);
+        Assert.Equal(WinnerReason.ObjectiveDetonated, snapshot.WinnerReason);
+    }
+
+    private static MatchSnapshotDto NewSnapshot(string id, MatchSnapshotStatus status, int remainingMs, long secondsFromEpoch, string? winnerTeam = null, bool isLastSend = false)
     {
         var timestamp = DateTimeOffset.UnixEpoch.AddSeconds(secondsFromEpoch).UtcDateTime.Ticks;
         return new MatchSnapshotDto
@@ -379,8 +499,8 @@ public class MatchCoordinatorTests
             Status = status,
             RemainingTimeMs = remainingMs,
             Timestamp = timestamp,
-            WinnerTeam = null,
-            IsLastSend = false,
+            WinnerTeam = winnerTeam,
+            IsLastSend = isLastSend,
             Players = Array.Empty<MatchPlayerSnapshotDto>()
         };
     }
@@ -411,6 +531,19 @@ public class MatchCoordinatorTests
         public FocusWindowInfo GetForegroundWindowInfo()
         {
             return FocusWindowInfo.Empty;
+        }
+    }
+
+    private sealed class TestRelayService : IRelayService
+    {
+        public bool IsEnabled { get; set; }
+
+        public List<CombinedRelayPayload> Payloads { get; } = new();
+
+        public Task TryRelayCombinedAsync(CombinedRelayPayload payload, CancellationToken cancellationToken)
+        {
+            Payloads.Add(payload);
+            return Task.CompletedTask;
         }
     }
 }
