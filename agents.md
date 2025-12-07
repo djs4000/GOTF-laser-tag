@@ -135,14 +135,18 @@ stateDiagram-v2
 
 ## **Status Window & UI**
 
-* **Status Form**: Always-on-top panel showing MatchId, FSM state, OVERTIME badge, and timers.  
+* **Status Form**: Always-on-top panel showing MatchId, FSM state, OVERTIME badge, timers, and a persistent ToolStrip toolbar that exposes Settings, Relay Monitor, and Debugging buttons with mouse and keyboard access.  
 * **Match Results Popup**:  
   * **Trigger**: Appears when match transitions to Completed.  
   * **Content**: Displays Winning Team, Role (Attacking vs Defending), and Reason (e.g., "Bomb Detonated").  
   * **Payload**: Shows raw JSON of the final relayed payload.  
+* **Settings Form**: Launchable from the toolbar; must surface every `appsettings.json` section with inline validation, persistence back to disk, immediate application when safe, and restart prompts for sections (e.g., HTTP bindings) that cannot hot-reload.  
+* **Relay Monitor**: Launchable from the toolbar; renders the latest Combined Relay Payload in a fixed JSON layout fed by the coordinator buffer, updates values within one second, and highlights stale data when no payload has arrived for more than five seconds.  
+* **Debug Payload Panel**: Launchable from the toolbar; lets operators craft match/prop/combined payloads, validates JSON, and submits through the existing RelayService with shared authentication headers, including success/failure feedback and diagnostics logging.  
 * **Preflight UI**:  
-  * Displays status of checks (Team names, Player names).  
+  * Displays status of checks (Team names, Player names) without enforcing a match-length validation prior to countdown because hosts no longer broadcast that value ahead of time.  
   * Indicators turn Green (Pass) or Red (Fail).
+* **Diagnostics & Logging**: Settings saves emit structured log entries that include restart-required sections; Relay Monitor logs when payload freshness transitions between fresh/stale states; Debug payload sends log payload type, HTTP status, and error details when submissions fail.
 
 ## **Configuration**
 ```json

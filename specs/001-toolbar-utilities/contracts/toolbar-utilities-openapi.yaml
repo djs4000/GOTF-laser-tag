@@ -1,0 +1,207 @@
+openapi: 3.0.3
+info:
+  title: Toolbar Utilities Internal API
+  version: 1.0.0
+servers:
+  - url: tray://localhost/ui
+paths:
+  /settings:
+    get:
+      summary: Load current application settings
+      operationId: getSettings
+      responses:
+        '200':
+          description: Settings profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationSettingsProfile'
+    put:
+      summary: Persist updated application settings
+      operationId: updateSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApplicationSettingsProfile'
+      responses:
+        '200':
+          description: Settings saved successfully (may include restart-required flags)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsSaveResult'
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationProblem'
+  /relay-monitor/payload:
+    get:
+      summary: Retrieve latest combined relay payload for display
+      operationId: getRelaySnapshot
+      responses:
+        '200':
+          description: Latest cached payload and freshness metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelayMonitorPayload'
+  /debug/payloads:
+    post:
+      summary: Send a debug payload through the relay pipeline
+      operationId: sendDebugPayload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DebugPayloadRequest'
+      responses:
+        '202':
+          description: Payload accepted for transmission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugPayloadResult'
+        '422':
+          description: Payload schema invalid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationProblem'
+components:
+  schemas:
+    ApplicationSettingsProfile:
+      type: object
+      properties:
+        http:
+          $ref: '#/components/schemas/HttpSettings'
+        relay:
+          $ref: '#/components/schemas/RelaySettings'
+        match:
+          $ref: '#/components/schemas/MatchSettings'
+        preflight:
+          $ref: '#/components/schemas/PreflightSettings'
+        uiAutomation:
+          $ref: '#/components/schemas/UiAutomationSettings'
+        diagnostics:
+          $ref: '#/components/schemas/DiagnosticsSettings'
+      required: [http, relay, match, preflight, uiAutomation, diagnostics]
+    HttpSettings:
+      type: object
+      properties:
+        urls:
+          type: array
+          items: { type: string }
+        bearerToken:
+          type: [string, 'null']
+        allowedCidrs:
+          type: array
+          items: { type: string }
+        requestTimeoutSeconds:
+          type: integer
+      required: [urls, allowedCidrs, requestTimeoutSeconds]
+    RelaySettings:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        url: { type: string }
+        bearerToken: { type: [string, 'null'] }
+        enableSchemaValidation: { type: boolean }
+      required: [enabled, url, enableSchemaValidation]
+    MatchSettings:
+      type: object
+      properties:
+        ltDisplayedDurationSec: { type: integer }
+        autoEndNoPlantAtSec: { type: integer }
+        defuseWindowSec: { type: integer }
+        clockExpectedHz: { type: integer }
+        latencyWindow: { type: integer }
+        preflightExpectedMatchLengthSec: { type: integer }
+      required:
+        - ltDisplayedDurationSec
+        - autoEndNoPlantAtSec
+        - defuseWindowSec
+        - clockExpectedHz
+    PreflightSettings:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        expectedTeamNames:
+          type: array
+          items: { type: string }
+        expectedPlayerNamePattern: { type: string }
+        enforceMatchCancellation: { type: boolean }
+      required: [enabled, expectedTeamNames, expectedPlayerNamePattern, enforceMatchCancellation]
+    UiAutomationSettings:
+      type: object
+      properties:
+        processName: { type: string }
+        windowTitleRegex: { type: string }
+        focusTimeoutMs: { type: integer }
+        postShortcutDelayMs: { type: integer }
+        debounceWindowMs: { type: integer }
+      required: [processName, windowTitleRegex, focusTimeoutMs, postShortcutDelayMs, debounceWindowMs]
+    DiagnosticsSettings:
+      type: object
+      properties:
+        logLevel: { type: string }
+        writeToFile: { type: boolean }
+        logPath: { type: string }
+      required: [logLevel, writeToFile]
+    SettingsSaveResult:
+      type: object
+      properties:
+        success: { type: boolean }
+        restartRequiredSections:
+          type: array
+          items: { type: string }
+      required: [success]
+    RelayMonitorPayload:
+      type: object
+      properties:
+        payload:
+          $ref: '#/components/schemas/CombinedRelayPayload'
+        lastUpdatedUtc:
+          type: string
+          format: date-time
+        stale:
+          type: boolean
+      required: [payload, lastUpdatedUtc, stale]
+    CombinedRelayPayload:
+      type: object
+      properties:
+        timestamp: { type: integer }
+        winner_team: { type: [string, 'null'] }
+        winner_reason: { type: [string, 'null'] }
+        match: {}
+        prop: {}
+      required: [timestamp, match, prop]
+    DebugPayloadRequest:
+      type: object
+      properties:
+        payloadType:
+          type: string
+          enum: [match, prop, combined]
+        json:
+          type: object
+        name:
+          type: [string, 'null']
+      required: [payloadType, json]
+    DebugPayloadResult:
+      type: object
+      properties:
+        accepted: { type: boolean }
+        downstreamStatus: { type: integer }
+        message: { type: string }
+      required: [accepted]
+    ValidationProblem:
+      type: object
+      properties:
+        errors:
+          type: array
+          items: { type: string }
+      required: [errors]

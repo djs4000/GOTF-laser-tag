@@ -1,0 +1,175 @@
+using System;
+using System.Drawing;
+using System.Text.Json;
+using System.Windows.Forms;
+using LaserTag.Defusal.Domain;
+using LaserTag.Defusal.Services;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+
+namespace LaserTag.Defusal.Ui;
+
+/// <summary>
+/// Displays the latest combined relay payload in a stable JSON layout.
+/// </summary>
+public sealed class RelayMonitorForm : Form
+{
+    private readonly RelaySnapshotCache _cache;
+    private readonly ILogger<RelayMonitorForm> _logger;
+    private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
+    private readonly RelayOptions _relayOptions;
+
+    private readonly Label _relayStatusLabel = new() { AutoSize = true };
+    private readonly Label _lastUpdatedLabel = new() { AutoSize = true };
+    private readonly Label _staleLabel = new() { AutoSize = true, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
+    private readonly TextBox _matchJson = CreateJsonViewer();
+    private readonly TextBox _propJson = CreateJsonViewer();
+
+    public RelayMonitorForm(
+        RelaySnapshotCache cache,
+        IOptions<RelayOptions> relayOptions,
+        ILogger<RelayMonitorForm> logger)
+    {
+        _cache = cache;
+        _logger = logger;
+        _relayOptions = relayOptions.Value;
+
+        Text = "Relay Monitor";
+        StartPosition = FormStartPosition.CenterParent;
+        Size = new Size(800, 600);
+        MinimumSize = new Size(720, 520);
+
+        var layout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 3,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Padding = new Padding(12)
+        };
+
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+
+        layout.Controls.Add(BuildHeaderPanel(), 0, 0);
+        layout.Controls.Add(BuildGroupBox("Match Payload", _matchJson), 0, 1);
+        layout.Controls.Add(BuildGroupBox("Prop Payload", _propJson), 0, 2);
+
+        Controls.Add(layout);
+
+        Shown += (_, _) => RenderSnapshot(_cache.GetSnapshot());
+        FormClosed += (_, _) => _cache.SnapshotChanged -= OnSnapshotChanged;
+        _cache.SnapshotChanged += OnSnapshotChanged;
+    }
+
+    private Control BuildHeaderPanel()
+    {
+        var panel = new TableLayoutPanel
+        {
+            ColumnCount = 2,
+            RowCount = 2,
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink
+        };
+
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 70));
+        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 30));
+
+        _relayStatusLabel.Text = _relayOptions.Enabled
+            ? "Relay Enabled - monitoring downstream payloads."
+            : "Relay Disabled - monitor displays most recent cached payload only.";
+        _relayStatusLabel.ForeColor = _relayOptions.Enabled ? Color.DarkGreen : Color.DarkRed;
+
+        _lastUpdatedLabel.Text = "Last updated: awaiting payload";
+        _staleLabel.Text = "STALE";
+        _staleLabel.ForeColor = Color.DarkRed;
+
+        panel.Controls.Add(_relayStatusLabel, 0, 0);
+        panel.SetColumnSpan(_relayStatusLabel, 2);
+        panel.Controls.Add(_lastUpdatedLabel, 0, 1);
+        panel.Controls.Add(_staleLabel, 1, 1);
+
+        return panel;
+    }
+
+    private static GroupBox BuildGroupBox(string title, Control inner)
+    {
+        var box = new GroupBox
+        {
+            Text = title,
+            Dock = DockStyle.Fill,
+            Padding = new Padding(10)
+        };
+
+        inner.Dock = DockStyle.Fill;
+        box.Controls.Add(inner);
+        return box;
+    }
+
+    private void OnSnapshotChanged(object? sender, RelaySnapshotEventArgs e)
+    {
+        if (!IsHandleCreated)
+        {
+            return;
+        }
+
+        try
+        {
+            BeginInvoke(new Action(() => RenderSnapshot(e.Snapshot)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to render relay snapshot.");
+        }
+    }
+
+    private void RenderSnapshot(RelaySnapshotState snapshot)
+    {
+        if (snapshot.LastUpdatedUtc is { } timestamp)
+        {
+            _lastUpdatedLabel.Text = $"Last updated (UTC): {timestamp:u}";
+        }
+        else
+        {
+            _lastUpdatedLabel.Text = "Last updated: awaiting payload";
+        }
+
+        if (snapshot.IsStale)
+        {
+            _staleLabel.Text = "STALE (>5s)";
+            _staleLabel.ForeColor = Color.DarkRed;
+        }
+        else
+        {
+            _staleLabel.Text = "Fresh";
+            _staleLabel.ForeColor = Color.DarkGreen;
+        }
+
+        if (snapshot.Payload is null)
+        {
+            _matchJson.Text = "No payload has been relayed yet.";
+            _propJson.Text = "No payload has been relayed yet.";
+            return;
+        }
+
+        _matchJson.Text = JsonSerializer.Serialize(snapshot.Payload.Match, _jsonOptions);
+        _propJson.Text = JsonSerializer.Serialize(snapshot.Payload.Prop, _jsonOptions);
+    }
+
+    private static TextBox CreateJsonViewer()
+    {
+        return new TextBox
+        {
+            Multiline = true,
+            ScrollBars = ScrollBars.Both,
+            ReadOnly = true,
+            Font = new Font("Consolas", 9f),
+            BackColor = Color.Black,
+            ForeColor = Color.Lime,
+            WordWrap = false
+        };
+    }
+}

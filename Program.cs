@@ -42,6 +42,7 @@ internal static class Program
         builder.Services.Configure<RelayOptions>(builder.Configuration.GetSection("Relay"));
         builder.Services.Configure<MatchOptions>(builder.Configuration.GetSection("Match"));
         builder.Services.Configure<UiAutomationOptions>(builder.Configuration.GetSection("UiAutomation"));
+        builder.Services.Configure<PreflightOptions>(builder.Configuration.GetSection("Preflight"));
         builder.Services.Configure<DiagnosticsOptions>(builder.Configuration.GetSection("Diagnostics"));
 
         builder.Host.UseSerilog((context, services, configuration) =>
@@ -70,6 +71,13 @@ internal static class Program
         builder.Services.AddSingleton<IRelayService, RelayService>();
         builder.Services.AddSingleton<TimeSynchronizationService>();
         builder.Services.AddSingleton<MatchCoordinator>();
+        builder.Services.AddSingleton<RelaySnapshotCache>();
+        builder.Services.AddSingleton<ToolbarNavigationService>();
+        builder.Services.AddSingleton<SettingsPersistenceService>();
+        builder.Services.AddSingleton<DebugPayloadService>();
+        builder.Services.AddTransient<SettingsForm>();
+        builder.Services.AddTransient<RelayMonitorForm>();
+        builder.Services.AddTransient<DebugPayloadForm>();
         builder.Services.AddSingleton<IFocusService, FocusService>();
 
         var httpOptions = builder.Configuration.GetSection("Http").Get<HttpOptions>() ?? new HttpOptions();
