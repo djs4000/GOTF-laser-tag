@@ -135,7 +135,6 @@ public sealed class DebugPayloadForm : Form
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
         _statusLabel.Text = "Ready.";
-        _statusLabel.BackColor = System.Drawing.Color.Blue;
         _statusLabel.AutoSize = true;
         _statusLabel.Margin = new Padding(0, 0, 12, 0);
         _statusLabel.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
