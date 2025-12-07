@@ -54,10 +54,22 @@ public sealed class StatusForm : Form
     private ToolStripButton? _debugToolbarButton;
     private const double CountdownDebugDurationSec = 5;
     private const double RunningDebugDurationSec = 219;
+    // Layout guardrails: keep StatusForm contents fully visible at 1280x720,
+    // stack panels gracefully when narrower, and respect DPI scaling.
+    private const int BasePadding = 8;
+    private const int DefaultClientWidth = 1280;
+    private const int DefaultClientHeight = 720;
+    private const int MinimumClientWidth = 900;
+    private const int MinimumClientHeight = 600;
+    private const int StackThresholdWidth = 1100;
     private double _debugElapsedSec;
     private double _debugTimerDurationSec;
     private MatchSnapshotStatus? _debugTimerStatus;
     private string? _debugMatchId;
+    private float _layoutScale = 1f;
+    private TableLayoutPanel? _contentLayout;
+    private Control? _gameConfigurationContainer;
+    private bool _isStackedLayout;
 
     [Browsable(false)]
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -77,13 +89,16 @@ public sealed class StatusForm : Form
         _toolbarNavigationService = toolbarNavigationService;
         _matchOptions = options.Value;
 
-        FormBorderStyle = FormBorderStyle.FixedToolWindow;
+        FormBorderStyle = FormBorderStyle.Sizable;
         StartPosition = FormStartPosition.Manual;
         TopMost = true;
         ShowInTaskbar = false;
         Text = "ICE Defusal Monitor";
+        _layoutScale = DeviceDpi / 96f;
+        Size = new Size(DefaultClientWidth, DefaultClientHeight);
+        MinimumSize = new Size(MinimumClientWidth, MinimumClientHeight);
         AutoSize = false;
-        AutoScroll = true;
+        AutoScroll = false;
         AutoSizeMode = AutoSizeMode.GrowOnly;
 
         // Toolbar insertion point (US1/T007): a ToolStrip will dock above this layout so its buttons
@@ -92,15 +107,16 @@ public sealed class StatusForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 3,
-            RowCount = 2,
-            Padding = new Padding(10),
+            RowCount = 3,
+            Padding = BuildPadding(),
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink
         };
 
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
-        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
@@ -135,6 +151,12 @@ public sealed class StatusForm : Form
         var preflightPanel = CreatePreflightPanel();
         configRow = AddRow(configSection.panel, configRow, "Attacking team", _attackingTeamComboBox);
         configRow = AddRow(configSection.panel, configRow, "Pre-flight", preflightPanel);
+        configSection.container.MinimumSize = new Size(Scale(220), 0);
+        configSection.container.MaximumSize = new Size(Scale(360), 0);
+        configSection.container.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        configSection.container.MinimumSize = new Size(Scale(220), 0);
+        configSection.container.MaximumSize = new Size(Scale(360), 0);
+        configSection.container.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         layout.Controls.Add(configSection.container, 2, 1);
 
         var toolbar = CreateToolbar();
@@ -153,15 +175,15 @@ public sealed class StatusForm : Form
         rootLayout.Controls.Add(layout, 0, 1);
 
         Controls.Add(rootLayout);
+        _contentLayout = layout;
+        _gameConfigurationContainer = configSection.container;
 
         layout.PerformLayout();
-        var preferredSize = layout.GetPreferredSize(Size.Empty);
-        var targetHeight = (int)Math.Ceiling(preferredSize.Height * 2d);
-        var targetWidth = (int)Math.Ceiling(preferredSize.Width * 1.15);
-        var targetSize = new Size(targetWidth, targetHeight);
-        ClientSize = targetSize;
-        MinimumSize = targetSize;
-        MaximumSize = targetSize;
+        // Enforce baseline window dimensions so Match/Prop/Game Configuration panels
+        // remain visible even before responsive stacking engages.
+        ClientSize = new Size(DefaultClientWidth, DefaultClientHeight);
+        MinimumSize = new Size(MinimumClientWidth, MinimumClientHeight);
+        UpdateLayoutMode();
 
         var refreshInterval = Math.Max(100, 1000 / Math.Max(1, _matchOptions.ClockExpectedHz));
         _refreshTimer = new System.Windows.Forms.Timer { Interval = refreshInterval };
@@ -268,7 +290,8 @@ public sealed class StatusForm : Form
         ConfigureChecklistLabel(_teamNamesCheckLabel);
         ConfigureChecklistLabel(_playerNamesCheckLabel);
         _matchDurationNoticeLabel.AutoSize = true;
-        _matchDurationNoticeLabel.MaximumSize = new Size(240, 0);
+        _matchDurationNoticeLabel.MaximumSize = new Size(Scale(320), 0);
+        _matchDurationNoticeLabel.AutoEllipsis = true;
         _matchDurationNoticeLabel.Margin = new Padding(0, 3, 0, 3);
         _matchDurationNoticeLabel.ForeColor = Color.DimGray;
 
@@ -337,8 +360,8 @@ public sealed class StatusForm : Form
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Dock = DockStyle.Fill,
-            Margin = new Padding(6),
-            Padding = new Padding(10),
+            Margin = new Padding(Scale(BasePadding)),
+            Padding = BuildPadding(),
             Text = title
         };
 
@@ -367,10 +390,11 @@ public sealed class StatusForm : Form
         return rowIndex + 1;
     }
 
-    private static void ConfigureChecklistLabel(Label label)
+    private void ConfigureChecklistLabel(Label label)
     {
         label.AutoSize = true;
-        label.MaximumSize = new Size(240, 0);
+        label.MaximumSize = new Size(Scale(280), 0);
+        label.AutoEllipsis = true;
         label.Margin = new Padding(0, 3, 0, 3);
     }
 
@@ -380,6 +404,17 @@ public sealed class StatusForm : Form
         panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         panel.Controls.Add(control, 0, rowIndex);
         return rowIndex + 1;
+    }
+
+    private Padding BuildPadding(int multiplier = 1)
+    {
+        var scaled = Scale(BasePadding * multiplier);
+        return new Padding(scaled);
+    }
+
+    private int Scale(int value)
+    {
+        return (int)Math.Round(value * _layoutScale, MidpointRounding.AwayFromZero);
     }
 
     private void OnSnapshotUpdated(object? sender, MatchStateSnapshot snapshot)
@@ -862,6 +897,20 @@ public sealed class StatusForm : Form
         }
     }
 
+    protected override void OnCreateControl()
+    {
+        base.OnCreateControl();
+        _layoutScale = DeviceDpi / 96f;
+        ApplyScaledLayoutGuidelines();
+        UpdateLayoutMode();
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        UpdateLayoutMode();
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -1056,5 +1105,54 @@ public sealed class StatusForm : Form
             _logger.LogError(ex, "Failed to open Debug Payload form.");
             MessageBox.Show(this, "Unable to open the Debug Payload Injector. Check logs for details.", "Toolbar", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    /// <summary>
+    /// Ensures Match/Prop/Game Configuration panels either render side-by-side or stack vertically when the window shrinks.
+    /// </summary>
+    private void UpdateLayoutMode()
+    {
+        if (_contentLayout is null || _gameConfigurationContainer is null)
+        {
+            return;
+        }
+
+        var shouldStack = ClientSize.Width < StackThresholdWidth;
+        if (_isStackedLayout == shouldStack)
+        {
+            return;
+        }
+
+        _isStackedLayout = shouldStack;
+        if (shouldStack)
+        {
+            _contentLayout.SetColumnSpan(_gameConfigurationContainer, 3);
+            _contentLayout.SetCellPosition(_gameConfigurationContainer, new TableLayoutPanelCellPosition(0, 2));
+        }
+        else
+        {
+            _contentLayout.SetColumnSpan(_gameConfigurationContainer, 1);
+            _contentLayout.SetCellPosition(_gameConfigurationContainer, new TableLayoutPanelCellPosition(2, 1));
+        }
+    }
+
+    /// <summary>
+    /// Reapplies padding and label constraints whenever the DPI scale changes.
+    /// </summary>
+    private void ApplyScaledLayoutGuidelines()
+    {
+        if (_contentLayout is null)
+        {
+            return;
+        }
+
+        _contentLayout.Padding = BuildPadding();
+        foreach (var group in _contentLayout.Controls.OfType<GroupBox>())
+        {
+            group.Padding = BuildPadding();
+        }
+        ConfigureChecklistLabel(_teamNamesCheckLabel);
+        ConfigureChecklistLabel(_playerNamesCheckLabel);
+        _matchDurationNoticeLabel.MaximumSize = new Size(Scale(320), 0);
     }
 }

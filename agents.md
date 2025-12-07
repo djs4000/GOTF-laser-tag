@@ -136,6 +136,7 @@ stateDiagram-v2
 ## **Status Window & UI**
 
 * **Status Form**: Always-on-top panel showing MatchId, FSM state, OVERTIME badge, timers, and a persistent ToolStrip toolbar that exposes Settings, Relay Monitor, and Debugging buttons with mouse and keyboard access.  
+  * Layout guardrail: Match, Prop, and Game Configuration/Pre-flight panels must remain fully visible within the default 1280×720 window; Game Configuration column may stack beneath others when width <1,100px but must never clip content.  
 * **Match Results Popup**:  
   * **Trigger**: Appears when match transitions to Completed.  
   * **Content**: Displays Winning Team, Role (Attacking vs Defending), and Reason (e.g., "Bomb Detonated").  
