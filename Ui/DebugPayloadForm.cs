@@ -33,8 +33,8 @@ public sealed class DebugPayloadForm : Form
 
         Text = "Debug Payload Injector";
         StartPosition = FormStartPosition.CenterParent;
-        Size = new Size(1000, 700);
-        MinimumSize = new Size(950, 600);
+        Size = new Size(900, 700);
+        MinimumSize = new Size(650, 300);
 
         BuildLayout();
 
@@ -44,7 +44,7 @@ public sealed class DebugPayloadForm : Form
 
         _formatButton.Click += (_, _) => FormatJsonContent();
         _sendButton.Click += async (_, _) => await OnSendAsync().ConfigureAwait(false);
-        _closeButton.Click += (_, _) => Close();
+        _closeButton.Click += (_, _) => Close(); 
     }
 
     private void BuildLayout()
@@ -55,11 +55,12 @@ public sealed class DebugPayloadForm : Form
             ColumnCount = 1,
             RowCount = 3,
             Padding = new Padding(12),
-            AutoSize = false
+            AutoSize = true
         };
-
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));
+        
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent,100));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
         root.Controls.Add(BuildHeaderPanel(), 0, 0);
@@ -108,6 +109,8 @@ public sealed class DebugPayloadForm : Form
     {
         var panel = new Panel
         {
+            Size = new Size(900,600),
+            AutoSizeMode = AutoSizeMode.GrowOnly,
             Dock = DockStyle.Fill,
             Padding = new Padding(0, 8, 0, 8)
         };
@@ -117,45 +120,43 @@ public sealed class DebugPayloadForm : Form
 
     private Control BuildFooterPanel()
     {
-        var panel = new TableLayoutPanel
+        var footer = new TableLayoutPanel
         {
-            ColumnCount = 2,
+            ColumnCount = 4,
             Dock = DockStyle.Fill,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Padding = new Padding(0, 8, 0, 0)
         };
 
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
         _statusLabel.Text = "Ready.";
+        _statusLabel.BackColor = System.Drawing.Color.Blue;
         _statusLabel.AutoSize = true;
         _statusLabel.Margin = new Padding(0, 0, 12, 0);
         _statusLabel.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
 
-        var buttonPanel = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.LeftToRight,
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            WrapContents = false,
-            Anchor = AnchorStyles.Right | AnchorStyles.Bottom,
-            Margin = new Padding(0),
-            Padding = new Padding(0)
-        };
-
+        _formatButton.AutoSize = true;
+        _formatButton.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
         _formatButton.Margin = new Padding(0, 0, 6, 0);
+
+        _sendButton.AutoSize = true;
+        _sendButton.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
         _sendButton.Margin = new Padding(0, 0, 6, 0);
-        _closeButton.Margin = new Padding(0);
 
-        buttonPanel.Controls.Add(_formatButton);
-        buttonPanel.Controls.Add(_sendButton);
-        buttonPanel.Controls.Add(_closeButton);
+        _closeButton.AutoSize = true;
+        _closeButton.Anchor = AnchorStyles.Right | AnchorStyles.Bottom;
 
-        panel.Controls.Add(_statusLabel, 0, 0);
-        panel.Controls.Add(buttonPanel, 1, 0);
-        return panel;
+        footer.Controls.Add(_statusLabel, 0, 0);
+        footer.Controls.Add(_formatButton, 1, 0);
+        footer.Controls.Add(_sendButton, 2, 0);
+        footer.Controls.Add(_closeButton, 3, 0);
+
+        return footer;
     }
 
     private async Task OnSendAsync()
