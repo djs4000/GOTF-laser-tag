@@ -21,6 +21,7 @@ public sealed class StatusForm : Form
     private readonly MatchCoordinator _coordinator;
     private readonly ILogger<StatusForm> _logger;
     private readonly IFocusService _focusService;
+    private readonly ToolbarNavigationService _toolbarNavigationService;
     private readonly MatchOptions _matchOptions;
     private readonly System.Windows.Forms.Timer _refreshTimer;
     private readonly System.Windows.Forms.Timer _focusTimer;
@@ -46,8 +47,11 @@ public sealed class StatusForm : Form
     private readonly ComboBox _attackingTeamComboBox = new();
     private readonly Label _teamNamesCheckLabel = new();
     private readonly Label _playerNamesCheckLabel = new();
-    private readonly Label _matchLengthCheckLabel = new();
+    private readonly Label _matchDurationNoticeLabel = new();
     private readonly Button _focusButton = new();
+    private ToolStripButton? _settingsToolbarButton;
+    private ToolStripButton? _relayToolbarButton;
+    private ToolStripButton? _debugToolbarButton;
     private const double CountdownDebugDurationSec = 5;
     private const double RunningDebugDurationSec = 219;
     private double _debugElapsedSec;
@@ -62,6 +66,7 @@ public sealed class StatusForm : Form
     public StatusForm(
         MatchCoordinator coordinator,
         IFocusService focusService,
+        ToolbarNavigationService toolbarNavigationService,
         IOptions<MatchOptions> options,
         HttpEndpointMetadata endpointMetadata,
         ILogger<StatusForm> logger)
@@ -69,6 +74,7 @@ public sealed class StatusForm : Form
         _coordinator = coordinator;
         _logger = logger;
         _focusService = focusService;
+        _toolbarNavigationService = toolbarNavigationService;
         _matchOptions = options.Value;
 
         FormBorderStyle = FormBorderStyle.FixedToolWindow;
@@ -80,6 +86,8 @@ public sealed class StatusForm : Form
         AutoScroll = true;
         AutoSizeMode = AutoSizeMode.GrowOnly;
 
+        // Toolbar insertion point (US1/T007): a ToolStrip will dock above this layout so its buttons
+        // stay aligned with the always-on-top window before additional utility forms launch.
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -129,7 +137,22 @@ public sealed class StatusForm : Form
         configRow = AddRow(configSection.panel, configRow, "Pre-flight", preflightPanel);
         layout.Controls.Add(configSection.container, 2, 1);
 
-        Controls.Add(layout);
+        var toolbar = CreateToolbar();
+        var rootLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1,
+            RowCount = 2
+        };
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        layout.Dock = DockStyle.Fill;
+        rootLayout.Controls.Add(toolbar, 0, 0);
+        rootLayout.Controls.Add(layout, 0, 1);
+
+        Controls.Add(rootLayout);
 
         layout.PerformLayout();
         var preferredSize = layout.GetPreferredSize(Size.Empty);
@@ -244,12 +267,15 @@ public sealed class StatusForm : Form
 
         ConfigureChecklistLabel(_teamNamesCheckLabel);
         ConfigureChecklistLabel(_playerNamesCheckLabel);
-        ConfigureChecklistLabel(_matchLengthCheckLabel);
+        _matchDurationNoticeLabel.AutoSize = true;
+        _matchDurationNoticeLabel.MaximumSize = new Size(240, 0);
+        _matchDurationNoticeLabel.Margin = new Padding(0, 3, 0, 3);
+        _matchDurationNoticeLabel.ForeColor = Color.DimGray;
 
         var row = 0;
         row = AddChecklistRow(panel, row, _teamNamesCheckLabel);
         row = AddChecklistRow(panel, row, _playerNamesCheckLabel);
-        AddChecklistRow(panel, row, _matchLengthCheckLabel);
+        AddChecklistRow(panel, row, _matchDurationNoticeLabel);
 
         return panel;
     }
@@ -667,28 +693,14 @@ public sealed class StatusForm : Form
         SetChecklistLabel(_teamNamesCheckLabel, teamNamesValid, "Team names set to Team 1 and Team 2", "Team names should be Team 1 and Team 2");
 
         var playerNamesValid = ArePlayerNamesValid(snapshot.Players);
-        SetChecklistLabel(_playerNamesCheckLabel, playerNamesValid, "Players named Team X + letter", "Players should be named Team 1 A, Team 1 B, Team 2 A…");
 
-        UpdateMatchLengthChecklist();
-    }
+        SetChecklistLabel(_playerNamesCheckLabel, playerNamesValid, "Players named Team X + letter", "Players should be named Team 1 A, Team 1 B, Team 2 A?");
 
-    private void UpdateMatchLengthChecklist()
-    {
-        var expected = _matchOptions.PreflightExpectedMatchLengthSec;
-        var configured = _matchOptions.LtDisplayedDurationSec;
-        var expectedText = FormatSeconds(expected);
-        var configuredText = FormatSeconds(configured);
 
-        if (configured == expected)
-        {
-            _matchLengthCheckLabel.Text = $"✓ Match length {configuredText}";
-            _matchLengthCheckLabel.ForeColor = Color.DarkGreen;
-        }
-        else
-        {
-            _matchLengthCheckLabel.Text = $"⚠ Expected {expectedText}, configured {configuredText}";
-            _matchLengthCheckLabel.ForeColor = Color.DarkRed;
-        }
+
+        var configuredText = FormatSeconds(_matchOptions.PreflightExpectedMatchLengthSec);
+
+        _matchDurationNoticeLabel.Text = $"Configured length: {configuredText}. Preflight waits for host data before showing countdown info.";
     }
 
     private static void SetChecklistLabel(Label label, bool? passed, string successText, string failureText)
@@ -965,6 +977,84 @@ public sealed class StatusForm : Form
         finally
         {
             _focusButton.Enabled = true;
+        }
+    }
+
+    private ToolStrip CreateToolbar()
+    {
+        var strip = new ToolStrip
+        {
+            Dock = DockStyle.Top,
+            GripStyle = ToolStripGripStyle.Hidden,
+            Stretch = true,
+            RenderMode = ToolStripRenderMode.System
+        };
+
+        _settingsToolbarButton = new ToolStripButton("&Settings")
+        {
+            DisplayStyle = ToolStripItemDisplayStyle.Text,
+            ToolTipText = "Open Settings (Alt+S)"
+        };
+        _settingsToolbarButton.Click += OnSettingsToolbarClick;
+
+        _relayToolbarButton = new ToolStripButton("&Relay Monitor")
+        {
+            DisplayStyle = ToolStripItemDisplayStyle.Text,
+            ToolTipText = "Open Relay Monitor (Alt+R)"
+        };
+        _relayToolbarButton.Click += OnRelayMonitorToolbarClick;
+
+        _debugToolbarButton = new ToolStripButton("&Debugging")
+        {
+            DisplayStyle = ToolStripItemDisplayStyle.Text,
+            ToolTipText = "Open Debug Payload Injector (Alt+D)"
+        };
+        _debugToolbarButton.Click += OnDebugToolbarClick;
+
+        strip.Items.Add(_settingsToolbarButton);
+        strip.Items.Add(new ToolStripSeparator());
+        strip.Items.Add(_relayToolbarButton);
+        strip.Items.Add(new ToolStripSeparator());
+        strip.Items.Add(_debugToolbarButton);
+        return strip;
+    }
+
+    private void OnSettingsToolbarClick(object? sender, EventArgs e)
+    {
+        try
+        {
+            _toolbarNavigationService.ShowOwnedForm<SettingsForm>(this);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to open Settings form via toolbar.");
+            MessageBox.Show(this, "Unable to open the Settings window. Check logs for details.", "Toolbar", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void OnRelayMonitorToolbarClick(object? sender, EventArgs e)
+    {
+        try
+        {
+            _toolbarNavigationService.ShowOwnedForm<RelayMonitorForm>(this);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to open Relay Monitor.");
+            MessageBox.Show(this, "Unable to open the Relay Monitor. Check logs for details.", "Toolbar", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void OnDebugToolbarClick(object? sender, EventArgs e)
+    {
+        try
+        {
+            _toolbarNavigationService.ShowOwnedForm<DebugPayloadForm>(this);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to open Debug Payload form.");
+            MessageBox.Show(this, "Unable to open the Debug Payload Injector. Check logs for details.", "Toolbar", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 }

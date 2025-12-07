@@ -1,7 +1,9 @@
+using System;
 using System.Drawing;
 using System.Threading;
 using System.Windows.Forms;
 using LaserTag.Defusal.Services;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace LaserTag.Defusal.Ui;
@@ -14,13 +16,22 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly StatusForm _statusForm;
     private readonly MatchCoordinator _coordinator;
     private readonly ILogger<TrayApplicationContext> _logger;
+    private readonly IServiceProvider _serviceProvider;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly NotifyIcon _notifyIcon;
 
-    public TrayApplicationContext(StatusForm statusForm, MatchCoordinator coordinator, ILogger<TrayApplicationContext> logger)
+    public TrayApplicationContext(
+        StatusForm statusForm,
+        MatchCoordinator coordinator,
+        ILogger<TrayApplicationContext> logger,
+        IServiceProvider serviceProvider,
+        IServiceScopeFactory scopeFactory)
     {
         _statusForm = statusForm;
         _coordinator = coordinator;
         _logger = logger;
+        _serviceProvider = serviceProvider;
+        _scopeFactory = scopeFactory;
 
         _notifyIcon = new NotifyIcon
         {
@@ -34,6 +45,16 @@ public sealed class TrayApplicationContext : ApplicationContext
 
         ShowWindow();
     }
+
+    /// <summary>
+    /// Provides access to the root service provider so utility forms can be resolved via DI.
+    /// </summary>
+    public IServiceProvider Services => _serviceProvider;
+
+    /// <summary>
+    /// Creates a new service scope for owned WinForms instances. Callers are responsible for disposing the scope.
+    /// </summary>
+    public IServiceScope CreateScope() => _scopeFactory.CreateScope();
 
     private ContextMenuStrip BuildContextMenu()
     {

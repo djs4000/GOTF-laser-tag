@@ -35,14 +35,26 @@ public sealed class RelayService : IRelayService
 
     public async Task TryRelayCombinedAsync(CombinedRelayPayload payload, CancellationToken cancellationToken)
     {
+        _ = await RelayWithResponseAsync(payload, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<RelaySendResult> RelayWithResponseAsync(CombinedRelayPayload payload, CancellationToken cancellationToken)
+    {
         if (!IsEnabled)
         {
-            return;
+            return new RelaySendResult(false, null, "Relay is disabled via configuration.");
         }
 
-        ValidatePayload(payload);
+        try
+        {
+            ValidatePayload(payload);
+        }
+        catch (Exception ex)
+        {
+            return new RelaySendResult(false, null, ex.Message);
+        }
 
-        await RelayToUrlAsync(_options.Url!, payload, cancellationToken).ConfigureAwait(false);
+        return await RelayToUrlAsync(_options.Url!, payload, cancellationToken).ConfigureAwait(false);
     }
 
     private void ValidatePayload(CombinedRelayPayload payload)
@@ -62,7 +74,7 @@ public sealed class RelayService : IRelayService
         _logger.LogDebug("Combined relay payload passed contract validation (schema validation enabled).");
     }
 
-    private async Task RelayToUrlAsync(string url, object payload, CancellationToken cancellationToken)
+    private async Task<RelaySendResult> RelayToUrlAsync(string url, object payload, CancellationToken cancellationToken)
     {
         try
         {
@@ -80,11 +92,15 @@ public sealed class RelayService : IRelayService
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Relay returned HTTP {StatusCode}", response.StatusCode);
+                return new RelaySendResult(false, (int)response.StatusCode, $"Relay returned HTTP {(int)response.StatusCode}");
             }
+
+            return new RelaySendResult(true, (int)response.StatusCode, "Relay succeeded.");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to relay combined payload");
+            return new RelaySendResult(false, null, ex.Message);
         }
     }
 }

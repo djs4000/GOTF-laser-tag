@@ -12,4 +12,8 @@ public interface IRelayService
     bool IsEnabled { get; }
 
     Task TryRelayCombinedAsync(CombinedRelayPayload payload, CancellationToken cancellationToken);
+
+    Task<RelaySendResult> RelayWithResponseAsync(CombinedRelayPayload payload, CancellationToken cancellationToken);
 }
+
+public sealed record RelaySendResult(bool Success, int? StatusCode, string? ErrorMessage);
