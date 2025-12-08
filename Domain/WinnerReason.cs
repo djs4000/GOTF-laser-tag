@@ -5,7 +5,6 @@ namespace LaserTag.Defusal.Domain;
 /// </summary>
 public enum WinnerReason
 {
-    HostTeamWipe,
     TeamElimination,
     ObjectiveDetonated,
     ObjectiveDefused,

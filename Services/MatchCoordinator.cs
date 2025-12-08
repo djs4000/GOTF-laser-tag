@@ -284,8 +284,6 @@ public sealed class MatchCoordinator : IDisposable
                 _lastElapsedSec = 0;
             }
 
-            TryResolveHostWinnerLocked(dto);
-
             if (dto.IsLastSend || dto.Status is MatchSnapshotStatus.Completed or MatchSnapshotStatus.WaitingOnFinalData)
             {
                 TryResolveEliminationWinnerLocked(dto.Players);
@@ -481,26 +479,6 @@ public sealed class MatchCoordinator : IDisposable
                 MarkMatchEndedLocked(triggerReason);
             }
         }
-    }
-
-    private void TryResolveHostWinnerLocked(MatchSnapshotDto dto)
-    {
-        if (_winnerReason is not null)
-        {
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(dto.WinnerTeam))
-        {
-            return;
-        }
-
-        if (dto.Status != MatchSnapshotStatus.Completed)
-        {
-            return;
-        }
-
-        SetWinnerLocked(dto.WinnerTeam!, WinnerReason.HostTeamWipe, "Host completed with winner");
     }
 
     private void MarkMatchEndedLocked(string reason)

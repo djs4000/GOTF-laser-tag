@@ -74,8 +74,8 @@ As a maintainer, I need relay payloads to consistently include both match and pr
 
 - **FR-001**: Disable and remove legacy dual relay endpoints; only the combined payload relay is exposed and used.
 - **FR-002**: Combined relay MUST always include both match and prop objects populated from latest buffered state, never sending null/empty components.
-- **FR-003**: Winner calculation MUST respect host team-wipe (rule 10.2.7) when reported before objective resolution, otherwise apply objective override (explode → attackers, defuse → defenders) or time expiration (no plant by 180s → defenders) per AGENTS.md.
-- **FR-004**: Relay payload MUST include final winner and reason aligned to the applied authority (Host winner, Objective, Time expiration).
+- **FR-003**: Winner calculation MUST ignore host-supplied winners; authority is derived solely from objective resolution (explode → attackers, defuse → defenders), time expiration (no plant by 180s → defenders), or team elimination.
+- **FR-004**: Relay payload MUST include final winner and reason aligned to the applied authority (Objective, Time expiration, Team elimination) when determinable.
 - **FR-005**: Prop events during host countdown MUST be ignored; FSM timing (auto-end at 180s no plant, 40s overtime for planted states) MUST remain unchanged.
 - **FR-006**: Focus automation MUST still target the ICE window and issue Ctrl+S whenever objective outcomes (detonation or defusal) end the match so the host terminates correctly.
 
@@ -84,7 +84,7 @@ As a maintainer, I need relay payloads to consistently include both match and pr
 - **CombinedPayload**: Contains MatchSnapshot and PropStatus objects with winner_reason derived per authority; never null components.
 - **MatchSnapshot**: Status, remaining_time_ms, winner_team (nullable until resolved), is_last_send, players (if provided).
 - **PropStatus**: State (armed, planted, defusing, defused, exploded), timestamp, uptime_ms.
-- **WinnerReason**: Authority source tag (HostTeamWipe, TeamElimination, ObjectiveDetonated, ObjectiveDefused, TimeExpiration) for auditability.
+- **WinnerReason**: Authority source tag (TeamElimination, ObjectiveDetonated, ObjectiveDefused, TimeExpiration) for auditability.
 
 ## Success Criteria *(mandatory)*
 
@@ -92,5 +92,5 @@ As a maintainer, I need relay payloads to consistently include both match and pr
 
 - **SC-001**: 100% of relay calls use the combined endpoint; no legacy relay invocations observed in telemetry during regression suite.
 - **SC-002**: In simulated mixed-cadence updates, every relay payload contains both match and prop objects populated with last-known values (0 null components across 200 consecutive relays).
-- **SC-003**: Winner outcomes match expected authority in all scripted scenarios (host team wipe, prop explode, prop defuse, no-plant timeout) with 0 mismatches across test matrix.
-- **SC-004**: Final payload includes winner_reason in 100% of end-of-match relays, verified via automated tests or log inspection.
+- **SC-003**: Winner outcomes match expected authority in all scripted scenarios (prop explode, prop defuse, no-plant timeout, team elimination) with 0 mismatches across test matrix.
+- **SC-004**: Final payload includes winner_reason whenever an outcome is determinable in end-of-match relays, verified via automated tests or log inspection.

@@ -54,19 +54,19 @@
 
 ## Phase 4: User Story 2 - Correct Winner Determination (Priority: P1)
 
-**Goal**: Winner logic honors host team wipes only before objective resolution, otherwise objective (detonate/defuse) or time expiration outcomes override, and focus automation triggers during objective endings.
+**Goal**: Winner logic is derived solely from objective (detonate/defuse), time expiration, or team elimination; host-provided winners are ignored, and focus automation triggers during objective endings.
 
 **Independent Test**: Simulate (1) host Completed with WinnerTeam prior to any prop resolution, (2) prop detonation/defuse after host winner to ensure override, and (3) timeout with no plant to award defenders—each scenario should populate `winner_team`, `winner_reason`, and trigger Ctrl+S when objectives resolve.
 
 ### Tests for User Story 2
 
-- [ ] T011 [P] [US2] Add host team-wipe test case inside `D:\Documents\Code Project\GOTF-laser-tag\Tests\MatchCoordinatorTests.cs` verifying `winner_team` mirrors the host WinnerTeam when Completed arrives before prop events.
+- [ ] T011 [P] [US2] Add test case inside `D:\Documents\Code Project\GOTF-laser-tag\Tests\MatchCoordinatorTests.cs` verifying host-supplied winners are ignored when no objective/time/elimination outcome exists.
 - [ ] T012 [P] [US2] Add prop detonation/defuse override tests to `D:\Documents\Code Project\GOTF-laser-tag\Tests\MatchCoordinatorTests.cs`, asserting host winners are superseded and the focus-service stub records a Ctrl+S invocation.
 - [ ] T013 [P] [US2] Add timeout and overtime coverage in `D:\Documents\Code Project\GOTF-laser-tag\Tests\MatchCoordinatorTests.cs` ensuring defenders win when no plant occurs by 180 s and attackers win when the overtime defuse window expires.
 
 ### Implementation for User Story 2
 
-- [ ] T014 [US2] Implement winner precedence logic in `D:\Documents\Code Project\GOTF-laser-tag\Services\MatchCoordinator.cs`, allowing HostTeamWipe winners only before objective resolution and enabling objective/time authorities to override via `SetWinnerLocked`.
+- [ ] T014 [US2] Implement winner precedence logic in `D:\Documents\Code Project\GOTF-laser-tag\Services\MatchCoordinator.cs`, deriving winners only from objective/time/elimination outcomes and ignoring host-supplied winners.
 - [ ] T015 [P] [US2] Extend `D:\Documents\Code Project\GOTF-laser-tag\Domain\MatchStateSnapshot.cs` and `D:\Documents\Code Project\GOTF-laser-tag\Ui\MatchResultForm.cs` so winner roles and reasons surface consistently (including CombinedRelayPayload winner_reason metadata).
 - [ ] T016 [P] [US2] Ensure focus automation remains wired by verifying `TryEndMatchAsync` in `D:\Documents\Code Project\GOTF-laser-tag\Services\MatchCoordinator.cs` invokes `D:\Documents\Code Project\GOTF-laser-tag\Services\FocusService.cs` whenever prop outcomes resolve the match, adding descriptive logs.
 - [ ] T017 [US2] Refine FSM enforcement in `D:\Documents\Code Project\GOTF-laser-tag\Services\MatchCoordinator.cs` so countdown prop events are ignored, time-expiration winners annotate context, and `_winnerReason` always matches AGENTS.md authority order.

@@ -10,7 +10,7 @@
     },
     "winner_reason": {
       "type": ["string", "null"],
-      "enum": ["HostTeamWipe", "TeamElimination", "ObjectiveDetonated", "ObjectiveDefused", "TimeExpiration", null],
+      "enum": ["TeamElimination", "ObjectiveDetonated", "ObjectiveDefused", "TimeExpiration", null],
       "description": "Authority that determined the winner."
     },
     "match": {

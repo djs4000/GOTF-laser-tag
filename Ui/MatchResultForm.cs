@@ -209,7 +209,6 @@ public partial class MatchResultForm : Form
         {
             return reason.Value switch
             {
-                WinnerReason.HostTeamWipe => "Host reported team wipe",
                 WinnerReason.TeamElimination => "Team elimination",
                 WinnerReason.ObjectiveDetonated => "Bomb detonated",
                 WinnerReason.ObjectiveDefused => "Bomb defused",

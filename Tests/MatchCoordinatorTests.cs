@@ -485,15 +485,34 @@ public class MatchCoordinatorTests
     }
 
     [Fact]
-    public async Task HostWinnerBeforeObjectiveIsRespected()
+    public async Task HostWinnerWithoutObjectiveIsIgnored()
     {
         var (coordinator, _, _) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Running, 200_000, 1), CancellationToken.None);
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Completed, 0, 2, winnerTeam: "Team 2"), CancellationToken.None);
 
         var snapshot = coordinator.Snapshot();
-        Assert.Equal("Team 2", snapshot.WinnerTeam);
-        Assert.Equal(WinnerReason.HostTeamWipe, snapshot.WinnerReason);
+        Assert.Null(snapshot.WinnerTeam);
+        Assert.Null(snapshot.WinnerReason);
+    }
+
+    [Fact]
+    public async Task NoWinnerWhenTeamsRemainAliveWithoutObjective()
+    {
+        var (coordinator, _, _) = CreateCoordinator();
+        var players = new[]
+        {
+            NewPlayer("a1", "Team 1", "alive", health: 80),
+            NewPlayer("b1", "Team 2", "alive", health: 75)
+        };
+
+        await coordinator.UpdateMatchSnapshotAsync(
+            NewSnapshot("alpha", MatchSnapshotStatus.Completed, 120_000, 1, players: players, isLastSend: true),
+            CancellationToken.None);
+
+        var snapshot = coordinator.Snapshot();
+        Assert.Null(snapshot.WinnerTeam);
+        Assert.Null(snapshot.WinnerReason);
     }
 
     [Fact]

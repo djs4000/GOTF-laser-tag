@@ -39,35 +39,33 @@
 
 ## **Winner Determination & Override Logic**
 
-The Coordinator serves as the arbiter between the Laser Tag Host (Standard TDM logic) and the Prop (Defusal logic). The Coordinator **overrides** the winner\_team field in the outbound relay payload when objective rules dictate the outcome.
+Winners are derived solely from objective, timing, or elimination authorities and ignore any host-supplied `winner_team` values.
 
-### **1\. Host Authority (Team Wipe)**
+### **1. Objective Authority (Detonation/Defusal)**
 
-* **Rule 10.2.7**: "If one of the teams has deactivated all players of the opposing team, such a team wins."  
-* **Logic**: If the Host reports Status: Completed and provides a valid WinnerTeam *before* the bomb detonates or is defused, the Coordinator respects the Host's decision.  
-* **Outcome**: **Pass-through Host Winner**.
+* **Rule 10.2.5**: "Offensive team wins if it has succeeded in activating the digital flame."
+* **Rule 10.2.6 (Part A)**: "Defensive team wins if... deactivated the digital flame."
+* **Logic**: If the Prop reports Detonated or Defused while the match is running:
+  1. Coordinator triggers Ctrl+S to end the Host match.
+  2. Coordinator ignores any score-based winner the Host might calculate upon termination.
+  3. Coordinator injects the objective winner into the relay payload.
+* **Outcome**:
+  * **Detonated**: Override -> **Attacking Team**.
+  * **Defused**: Override -> **Defending Team**.
 
-### **2\. Objective Authority (Detonation/Defusal)**
+### **2. Time Authority (Expiration)**
 
-* **Rule 10.2.5**: "Offensive team wins if it has succeeded in activating the digital flame."  
-* **Rule 10.2.6 (Part A)**: "Defensive team wins if... deactivated the digital flame."  
-* **Logic**: If the Prop reports Detonated or Defused while the match is running:  
-  1. Coordinator triggers Ctrl+S to end the Host match.  
-  2. Coordinator ignores any score-based winner the Host might calculate upon termination.  
-  3. Coordinator injects the objective winner into the relay payload.  
-* **Outcome**:  
-  * **Detonated**: Override \-\> **Attacking Team**.  
-  * **Defused**: Override \-\> **Defending Team**.
-
-### **3\. Time Authority (Expiration)**
-
-* **Rule 10.2.6 (Part B)**: "Defensive team wins if the opposing team has failed to activate... in the allotted time."  
-* **Logic**:  
-  * **No Plant**: If the timer expires (or Auto-End threshold reached) without a plant, the Attackers failed.  
-    * **Outcome**: Override \-\> **Defending Team**.  
-  * **Active Plant (Overtime)**: If the timer expires but the bomb is ticking (Overtime), the match logically continues until the bomb resolves. The Coordinator waits for the final Prop state.  
+* **Rule 10.2.6 (Part B)**: "Defensive team wins if the opposing team has failed to activate... in the allotted time."
+* **Logic**:
+  * **No Plant**: If the timer expires (or Auto-End threshold reached) without a plant, the Attackers failed.
+    * **Outcome**: Override -> **Defending Team**.
+  * **Active Plant (Overtime)**: If the timer expires but the bomb is ticking (Overtime), the match logically continues until the bomb resolves. The Coordinator waits for the final Prop state.
     * **Outcome**: Depends on Prop (Detonate/Defuse).
 
+### **3. Team Elimination**
+
+* **Logic**: If one team has living players while the opposing team has none (and both teams are present in the snapshot), the living team wins.
+* **Outcome**: **Team Elimination Winner**.
 ## **HTTP API**
 
 Base URL configurable (e.g., http://127.0.0.1:5055/)
