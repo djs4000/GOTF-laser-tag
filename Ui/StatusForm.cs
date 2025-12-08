@@ -92,7 +92,7 @@ public sealed class StatusForm : Form
         FormBorderStyle = FormBorderStyle.Sizable;
         StartPosition = FormStartPosition.Manual;
         TopMost = true;
-        ShowInTaskbar = false;
+        //ShowInTaskbar = false;
         Text = "ICE Defusal Monitor";
         _layoutScale = DeviceDpi / 96f;
         Size = new Size(DefaultClientWidth, DefaultClientHeight);
