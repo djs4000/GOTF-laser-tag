@@ -8,13 +8,9 @@
       "type": "integer",
       "description": "Source event timestamp that triggered this relay payload."
     },
-    "winner_team": {
-      "type": ["string", "null"],
-      "description": "Attackers or defenders. Null until resolved."
-    },
     "winner_reason": {
       "type": ["string", "null"],
-      "enum": ["HostTeamWipe", "ObjectiveDetonated", "ObjectiveDefused", "TimeExpiration", null],
+      "enum": ["HostTeamWipe", "TeamElimination", "ObjectiveDetonated", "ObjectiveDefused", "TimeExpiration", null],
       "description": "Authority that determined the winner."
     },
     "match": {

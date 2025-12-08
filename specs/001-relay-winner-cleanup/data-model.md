@@ -9,8 +9,7 @@
 ### CombinedPayload
 - match: MatchSnapshot (required; latest buffered)
 - prop: PropStatus (required; latest buffered)
-- winner_team: string? (null until resolved; attackers/defenders)
-- winner_reason: string? (HostTeamWipe | ObjectiveDetonated | ObjectiveDefused | TimeExpiration)
+- winner_reason: string? (HostTeamWipe | TeamElimination | ObjectiveDetonated | ObjectiveDefused | TimeExpiration)
 - timestamp: number (source event timestamp for the triggering update)
 
 ### MatchSnapshot
@@ -34,7 +33,7 @@ Validation:
 - Overtime window: defuse allowed until plant_time + 40s when plant occurs at ≥180s.
 
 ### WinnerReason
-- authority: HostTeamWipe | ObjectiveDetonated | ObjectiveDefused | TimeExpiration
+- authority: HostTeamWipe | TeamElimination | ObjectiveDetonated | ObjectiveDefused | TimeExpiration
 - source_detail: string (optional debug note such as "host winner before objective" or "no plant at 180s")
 
 ## Relationships

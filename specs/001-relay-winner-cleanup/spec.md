@@ -81,10 +81,10 @@ As a maintainer, I need relay payloads to consistently include both match and pr
 
 ### Key Entities *(include if feature involves data)*
 
-- **CombinedPayload**: Contains MatchSnapshot and PropStatus objects with winner_team and winner_reason derived per authority; never null components.
+- **CombinedPayload**: Contains MatchSnapshot and PropStatus objects with winner_reason derived per authority; never null components.
 - **MatchSnapshot**: Status, remaining_time_ms, winner_team (nullable until resolved), is_last_send, players (if provided).
 - **PropStatus**: State (armed, planted, defusing, defused, exploded), timestamp, uptime_ms.
-- **WinnerReason**: Authority source tag (HostTeamWipe, ObjectiveDetonated, ObjectiveDefused, TimeExpiration) for auditability.
+- **WinnerReason**: Authority source tag (HostTeamWipe, TeamElimination, ObjectiveDetonated, ObjectiveDefused, TimeExpiration) for auditability.
 
 ## Success Criteria *(mandatory)*
 

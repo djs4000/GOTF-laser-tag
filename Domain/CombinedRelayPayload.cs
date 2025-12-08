@@ -12,9 +12,6 @@ public sealed class CombinedRelayPayload
     [JsonPropertyName("timestamp")]
     public long Timestamp { get; init; }
 
-    [JsonPropertyName("winner_team")]
-    public string? WinnerTeam { get; init; }
-
     [JsonPropertyName("winner_reason")]
     public WinnerReason? WinnerReason { get; init; }
 

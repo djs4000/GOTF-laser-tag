@@ -170,7 +170,6 @@ public partial class MatchResultForm : Form
     {
         var combinedPayload = snapshot.LatestCombinedRelayPayload;
         var winner = snapshot.WinnerTeam
-            ?? combinedPayload?.WinnerTeam
             ?? combinedPayload?.Match?.WinnerTeam;
         if (string.IsNullOrWhiteSpace(winner))
         {
@@ -211,6 +210,7 @@ public partial class MatchResultForm : Form
             return reason.Value switch
             {
                 WinnerReason.HostTeamWipe => "Host reported team wipe",
+                WinnerReason.TeamElimination => "Team elimination",
                 WinnerReason.ObjectiveDetonated => "Bomb detonated",
                 WinnerReason.ObjectiveDefused => "Bomb defused",
                 WinnerReason.TimeExpiration => "Time expired (no plant)",
