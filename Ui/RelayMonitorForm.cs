@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Text.Json;
 using System.Windows.Forms;
 using LaserTag.Defusal.Domain;
+using LaserTag.Defusal.Interop;
 using LaserTag.Defusal.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -201,6 +202,11 @@ public sealed class RelayMonitorForm : Form
         textBox.SuspendLayout();
         try
         {
+            if (textBox.IsHandleCreated)
+            {
+                NativeMethods.SendMessage(textBox.Handle, NativeMethods.WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+            }
+
             textBox.Text = newText;
 
             if (textBox.TextLength == 0)
@@ -223,6 +229,12 @@ public sealed class RelayMonitorForm : Form
         }
         finally
         {
+            if (textBox.IsHandleCreated)
+            {
+                NativeMethods.SendMessage(textBox.Handle, NativeMethods.WM_SETREDRAW, new IntPtr(1), IntPtr.Zero);
+                textBox.Invalidate();
+            }
+
             textBox.ResumeLayout();
         }
     }

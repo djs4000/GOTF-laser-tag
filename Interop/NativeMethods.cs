@@ -6,6 +6,7 @@ namespace LaserTag.Defusal.Interop;
 internal static class NativeMethods
 {
     public const int SW_RESTORE = 9;
+    public const int WM_SETREDRAW = 0x000B;
     public const uint INPUT_KEYBOARD = 1;
     public const ushort VK_CONTROL = 0x11;
     public const ushort VK_S = 0x53;
@@ -51,6 +52,9 @@ internal static class NativeMethods
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool CloseHandle(IntPtr hObject);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct INPUT
