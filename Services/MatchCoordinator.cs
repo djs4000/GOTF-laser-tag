@@ -284,7 +284,10 @@ public sealed class MatchCoordinator : IDisposable
                 _lastElapsedSec = 0;
             }
 
-            TryResolveHostWinnerLocked(dto);
+            if (dto.IsLastSend || dto.Status is MatchSnapshotStatus.Completed or MatchSnapshotStatus.WaitingOnFinalData)
+            {
+                TryResolveEliminationWinnerLocked(dto.Players);
+            }
 
             switch (dto.Status)
             {
@@ -478,26 +481,6 @@ public sealed class MatchCoordinator : IDisposable
         }
     }
 
-    private void TryResolveHostWinnerLocked(MatchSnapshotDto dto)
-    {
-        if (_winnerReason is not null)
-        {
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(dto.WinnerTeam))
-        {
-            return;
-        }
-
-        if (dto.Status != MatchSnapshotStatus.Completed)
-        {
-            return;
-        }
-
-        SetWinnerLocked(dto.WinnerTeam!, WinnerReason.HostTeamWipe, "Host completed with winner");
-    }
-
     private void MarkMatchEndedLocked(string reason)
     {
         _matchEnded = true;
@@ -512,7 +495,42 @@ public sealed class MatchCoordinator : IDisposable
             _lastMatchRemainingMs = 0;
         }
 
-        _lastActionDescription = $"Ended: {reason}";
+            _lastActionDescription = $"Ended: {reason}";
+    }
+
+    private void TryResolveEliminationWinnerLocked(IReadOnlyList<MatchPlayerSnapshotDto> players)
+    {
+        if (_winnerReason is not null)
+        {
+            return;
+        }
+
+        if (players is null || players.Count == 0)
+        {
+            return;
+        }
+
+        var teamCounts = BuildTeamPlayerCounts(players);
+        var aliveTeams = teamCounts
+            .Where(team => team.Alive > 0 && !string.Equals(team.Team, "Unknown", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        if (aliveTeams.Length != 1)
+        {
+            return;
+        }
+
+        var winnerTeam = aliveTeams[0].Team;
+        var opposingTeamPresent = teamCounts.Any(team =>
+            !string.Equals(team.Team, winnerTeam, StringComparison.OrdinalIgnoreCase)
+            && team.Total > 0);
+
+        if (!opposingTeamPresent)
+        {
+            return;
+        }
+
+        SetWinnerLocked(winnerTeam, WinnerReason.TeamElimination, "All opposing players eliminated");
     }
 
     /// <summary>
@@ -527,7 +545,6 @@ public sealed class MatchCoordinator : IDisposable
         return new CombinedRelayPayload
         {
             Timestamp = timestamp,
-            WinnerTeam = _winnerTeam ?? matchPayload.WinnerTeam,
             WinnerReason = _winnerReason,
             Match = matchPayload,
             Prop = propPayload
@@ -726,7 +743,7 @@ public sealed class MatchCoordinator : IDisposable
             FocusAcquired: _focusAcquired,
             Players: players,
             TeamPlayerCounts: teamPlayerCounts,
-            WinnerTeam: combinedRelayPayload.WinnerTeam ?? _winnerTeam,
+            WinnerTeam: _winnerTeam ?? combinedRelayPayload.Match.WinnerTeam,
             WinnerReason: combinedRelayPayload.WinnerReason ?? _winnerReason,
             LatestCombinedRelayPayload: combinedRelayPayload);
 

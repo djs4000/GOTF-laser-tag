@@ -95,7 +95,6 @@ public sealed class DebugPayloadService
         return new CombinedRelayPayload
         {
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            WinnerTeam = match.WinnerTeam,
             WinnerReason = null,
             Match = match,
             Prop = fallback
@@ -119,7 +118,6 @@ public sealed class DebugPayloadService
         return new CombinedRelayPayload
         {
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            WinnerTeam = fallback.WinnerTeam,
             WinnerReason = null,
             Match = fallback,
             Prop = prop

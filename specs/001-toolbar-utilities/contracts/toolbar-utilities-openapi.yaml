@@ -175,7 +175,6 @@ components:
       type: object
       properties:
         timestamp: { type: integer }
-        winner_team: { type: [string, 'null'] }
         winner_reason: { type: [string, 'null'] }
         match: {}
         prop: {}

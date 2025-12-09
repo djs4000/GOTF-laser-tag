@@ -485,15 +485,34 @@ public class MatchCoordinatorTests
     }
 
     [Fact]
-    public async Task HostWinnerBeforeObjectiveIsRespected()
+    public async Task HostWinnerWithoutObjectiveIsIgnored()
     {
         var (coordinator, _, _) = CreateCoordinator();
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Running, 200_000, 1), CancellationToken.None);
         await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("alpha", MatchSnapshotStatus.Completed, 0, 2, winnerTeam: "Team 2"), CancellationToken.None);
 
         var snapshot = coordinator.Snapshot();
-        Assert.Equal("Team 2", snapshot.WinnerTeam);
-        Assert.Equal(WinnerReason.HostTeamWipe, snapshot.WinnerReason);
+        Assert.Null(snapshot.WinnerTeam);
+        Assert.Null(snapshot.WinnerReason);
+    }
+
+    [Fact]
+    public async Task NoWinnerWhenTeamsRemainAliveWithoutObjective()
+    {
+        var (coordinator, _, _) = CreateCoordinator();
+        var players = new[]
+        {
+            NewPlayer("a1", "Team 1", "alive", health: 80),
+            NewPlayer("b1", "Team 2", "alive", health: 75)
+        };
+
+        await coordinator.UpdateMatchSnapshotAsync(
+            NewSnapshot("alpha", MatchSnapshotStatus.Completed, 120_000, 1, players: players, isLastSend: true),
+            CancellationToken.None);
+
+        var snapshot = coordinator.Snapshot();
+        Assert.Null(snapshot.WinnerTeam);
+        Assert.Null(snapshot.WinnerReason);
     }
 
     [Fact]
@@ -507,6 +526,25 @@ public class MatchCoordinatorTests
         var snapshot = coordinator.Snapshot();
         Assert.Equal("Team 1", snapshot.WinnerTeam); // Default attacking team
         Assert.Equal(WinnerReason.ObjectiveDetonated, snapshot.WinnerReason);
+    }
+
+    [Fact]
+    public async Task TeamEliminationUsesAliveTeam()
+    {
+        var (coordinator, _, _) = CreateCoordinator();
+        var players = new[]
+        {
+            NewPlayer("a1", "Team 1", "alive", health: 100),
+            NewPlayer("b1", "Team 2", "dead", health: 0, deaths: 1)
+        };
+
+        await coordinator.UpdateMatchSnapshotAsync(
+            NewSnapshot("alpha", MatchSnapshotStatus.Completed, 0, 1, players: players, isLastSend: true),
+            CancellationToken.None);
+
+        var snapshot = coordinator.Snapshot();
+        Assert.Equal("Team 1", snapshot.WinnerTeam);
+        Assert.Equal(WinnerReason.TeamElimination, snapshot.WinnerReason);
     }
 
     [Fact]
@@ -545,7 +583,14 @@ public class MatchCoordinatorTests
         Assert.Equal(WinnerReason.ObjectiveDetonated, snapshot.WinnerReason);
     }
 
-    private static MatchSnapshotDto NewSnapshot(string id, MatchSnapshotStatus status, int remainingMs, long secondsFromEpoch, string? winnerTeam = null, bool isLastSend = false)
+    private static MatchSnapshotDto NewSnapshot(
+        string id,
+        MatchSnapshotStatus status,
+        int remainingMs,
+        long secondsFromEpoch,
+        string? winnerTeam = null,
+        bool isLastSend = false,
+        IReadOnlyList<MatchPlayerSnapshotDto>? players = null)
     {
         var timestamp = DateTimeOffset.UnixEpoch.AddSeconds(secondsFromEpoch).UtcDateTime.Ticks;
         return new MatchSnapshotDto
@@ -556,7 +601,25 @@ public class MatchCoordinatorTests
             Timestamp = timestamp,
             WinnerTeam = winnerTeam,
             IsLastSend = isLastSend,
-            Players = Array.Empty<MatchPlayerSnapshotDto>()
+            Players = players ?? Array.Empty<MatchPlayerSnapshotDto>()
+        };
+    }
+
+    private static MatchPlayerSnapshotDto NewPlayer(string id, string team, string state, int health = 0, int deaths = 0)
+    {
+        return new MatchPlayerSnapshotDto
+        {
+            Id = id,
+            Team = team,
+            State = state,
+            Health = health,
+            Headshots = 0,
+            Kills = Array.Empty<MatchPlayerKillDto>(),
+            KillsCount = 0,
+            Deaths = deaths,
+            ShotsHit = 0,
+            ShotsFired = 0,
+            Ammo = 0
         };
     }
 
@@ -701,7 +764,6 @@ public class MatchCoordinatorTests
             return new CombinedRelayPayload
             {
                 Timestamp = payload.Timestamp,
-                WinnerTeam = payload.WinnerTeam,
                 WinnerReason = payload.WinnerReason,
                 Match = CloneMatch(payload.Match),
                 Prop = CloneProp(payload.Prop)
