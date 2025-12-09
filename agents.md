@@ -140,7 +140,7 @@ stateDiagram-v2
   * **Content**: Displays Winning Team, Role (Attacking vs Defending), and Reason (e.g., "Bomb Detonated").  
   * **Payload**: Shows raw JSON of the final relayed payload.  
 * **Settings Form**: Launchable from the toolbar; must surface every `appsettings.json` section with inline validation, persistence back to disk, immediate application when safe, and restart prompts for sections (e.g., HTTP bindings) that cannot hot-reload.  
-* **Relay Monitor**: Launchable from the toolbar; renders the latest Combined Relay Payload in a fixed JSON layout fed by the coordinator buffer, updates values within one second, and highlights stale data when no payload has arrived for more than five seconds.  
+* **Relay Monitor**: Launchable from the toolbar; renders the incoming Match and Prop JSON alongside the outgoing Combined Relay Payload in a fixed JSON layout fed by the coordinator buffer, preserves scroll position (tail-follows when scrolled to the bottom), updates values within one second, and highlights stale data when no payload has arrived for more than five seconds.
 * **Debug Payload Panel**: Launchable from the toolbar; lets operators craft match/prop/combined payloads, validates JSON, and submits through the existing RelayService with shared authentication headers, including success/failure feedback and diagnostics logging.  
 * **Preflight UI**:  
   * Displays status of checks (Team names, Player names) without enforcing a match-length validation prior to countdown because hosts no longer broadcast that value ahead of time.  
