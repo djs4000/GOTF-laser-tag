@@ -1,8 +1,10 @@
 using System;
 using System.Drawing;
 using System.Text.Json;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using LaserTag.Defusal.Domain;
+using LaserTag.Defusal.Interop;
 using LaserTag.Defusal.Services;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -24,6 +26,7 @@ public sealed class RelayMonitorForm : Form
     private readonly Label _staleLabel = new() { AutoSize = true, Font = new Font("Segoe UI", 9, FontStyle.Bold) };
     private readonly TextBox _matchJson = CreateJsonViewer();
     private readonly TextBox _propJson = CreateJsonViewer();
+    private readonly TextBox _combinedJson = CreateJsonViewer();
 
     public RelayMonitorForm(
         RelaySnapshotCache cache,
@@ -42,20 +45,39 @@ public sealed class RelayMonitorForm : Form
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 3,
+            ColumnCount = 2,
+            RowCount = 2,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Padding = new Padding(12)
         };
 
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60));
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-        layout.Controls.Add(BuildHeaderPanel(), 0, 0);
-        layout.Controls.Add(BuildGroupBox("Match Payload", _matchJson), 0, 1);
-        layout.Controls.Add(BuildGroupBox("Prop Payload", _propJson), 0, 2);
+        var headerPanel = BuildHeaderPanel();
+        layout.Controls.Add(headerPanel, 0, 0);
+        layout.SetColumnSpan(headerPanel, 2);
+
+        var leftPanel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink
+        };
+
+        leftPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        leftPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+
+        leftPanel.Controls.Add(BuildGroupBox("Match Payload", _matchJson), 0, 0);
+        leftPanel.Controls.Add(BuildGroupBox("Prop Payload", _propJson), 0, 1);
+
+        layout.Controls.Add(leftPanel, 0, 1);
+        layout.Controls.Add(BuildGroupBox("Combined Payload", _combinedJson), 1, 1);
 
         Controls.Add(layout);
 
@@ -150,13 +172,92 @@ public sealed class RelayMonitorForm : Form
 
         if (snapshot.Payload is null)
         {
-            _matchJson.Text = "No payload has been relayed yet.";
-            _propJson.Text = "No payload has been relayed yet.";
+            const string message = "No payload has been relayed yet.";
+            UpdateJsonViewer(_matchJson, message);
+            UpdateJsonViewer(_propJson, message);
+            UpdateJsonViewer(_combinedJson, message);
             return;
         }
 
-        _matchJson.Text = JsonSerializer.Serialize(snapshot.Payload.Match, _jsonOptions);
-        _propJson.Text = JsonSerializer.Serialize(snapshot.Payload.Prop, _jsonOptions);
+        var matchJson = JsonSerializer.Serialize(snapshot.Payload.Match, _jsonOptions);
+        var propJson = JsonSerializer.Serialize(snapshot.Payload.Prop, _jsonOptions);
+        var combinedJson = JsonSerializer.Serialize(snapshot.Payload, _jsonOptions);
+
+        UpdateJsonViewer(_matchJson, matchJson);
+        UpdateJsonViewer(_propJson, propJson);
+        UpdateJsonViewer(_combinedJson, combinedJson);
+    }
+
+    private static void UpdateJsonViewer(TextBox textBox, string newText)
+    {
+        if (textBox.TextLength == newText.Length && textBox.Text == newText)
+        {
+            return;
+        }
+
+        if (!textBox.IsHandleCreated)
+        {
+            textBox.Text = newText;
+            return;
+        }
+
+        var scrollInfo = new NativeMethods.SCROLLINFO
+        {
+            cbSize = (uint)Marshal.SizeOf<NativeMethods.SCROLLINFO>(),
+            fMask = NativeMethods.SIF_ALL
+        };
+
+        NativeMethods.GetScrollInfo(textBox.Handle, NativeMethods.SB_VERT, ref scrollInfo);
+
+        var previousPos = scrollInfo.nPos;
+        var wasAtBottom = scrollInfo.nMax <= 0 || previousPos >= scrollInfo.nMax - scrollInfo.nPage;
+
+        textBox.SuspendLayout();
+        try
+        {
+            NativeMethods.SendMessage(textBox.Handle, NativeMethods.WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
+
+            textBox.Text = newText;
+
+            if (textBox.TextLength == 0)
+            {
+                return;
+            }
+
+            var updatedInfo = new NativeMethods.SCROLLINFO
+            {
+                cbSize = (uint)Marshal.SizeOf<NativeMethods.SCROLLINFO>(),
+                fMask = NativeMethods.SIF_ALL
+            };
+
+            NativeMethods.GetScrollInfo(textBox.Handle, NativeMethods.SB_VERT, ref updatedInfo);
+
+            if (wasAtBottom)
+            {
+                textBox.SelectionStart = textBox.TextLength;
+                textBox.SelectionLength = 0;
+                textBox.ScrollToCaret();
+                return;
+            }
+
+            var targetPos = Math.Max(0, Math.Min(previousPos, updatedInfo.nMax - (int)updatedInfo.nPage + 1));
+
+            updatedInfo.nPos = targetPos;
+            updatedInfo.fMask = NativeMethods.SIF_POS;
+
+            NativeMethods.SetScrollInfo(textBox.Handle, NativeMethods.SB_VERT, ref updatedInfo, true);
+            NativeMethods.SendMessage(
+                textBox.Handle,
+                NativeMethods.WM_VSCROLL,
+                new IntPtr(NativeMethods.MakeWParam(NativeMethods.SB_THUMBPOSITION, targetPos)),
+                IntPtr.Zero);
+        }
+        finally
+        {
+            NativeMethods.SendMessage(textBox.Handle, NativeMethods.WM_SETREDRAW, new IntPtr(1), IntPtr.Zero);
+            textBox.Invalidate();
+            textBox.ResumeLayout();
+        }
     }
 
     private static TextBox CreateJsonViewer()
