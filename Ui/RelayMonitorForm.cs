@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using System.Text.Json;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using LaserTag.Defusal.Domain;
 using LaserTag.Defusal.Interop;
@@ -194,18 +195,27 @@ public sealed class RelayMonitorForm : Form
             return;
         }
 
-        var oldSelectionStart = textBox.SelectionStart;
-        var oldSelectionLength = textBox.SelectionLength;
+        if (!textBox.IsHandleCreated)
+        {
+            textBox.Text = newText;
+            return;
+        }
 
-        var wasAtEnd = oldSelectionStart + oldSelectionLength >= textBox.TextLength;
+        var scrollInfo = new NativeMethods.SCROLLINFO
+        {
+            cbSize = (uint)Marshal.SizeOf<NativeMethods.SCROLLINFO>(),
+            fMask = NativeMethods.SIF_ALL
+        };
+
+        NativeMethods.GetScrollInfo(textBox.Handle, NativeMethods.SB_VERT, ref scrollInfo);
+
+        var previousPos = scrollInfo.nPos;
+        var wasAtBottom = scrollInfo.nMax <= 0 || previousPos >= scrollInfo.nMax - scrollInfo.nPage;
 
         textBox.SuspendLayout();
         try
         {
-            if (textBox.IsHandleCreated)
-            {
-                NativeMethods.SendMessage(textBox.Handle, NativeMethods.WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
-            }
+            NativeMethods.SendMessage(textBox.Handle, NativeMethods.WM_SETREDRAW, IntPtr.Zero, IntPtr.Zero);
 
             textBox.Text = newText;
 
@@ -214,27 +224,38 @@ public sealed class RelayMonitorForm : Form
                 return;
             }
 
-            if (wasAtEnd)
+            var updatedInfo = new NativeMethods.SCROLLINFO
+            {
+                cbSize = (uint)Marshal.SizeOf<NativeMethods.SCROLLINFO>(),
+                fMask = NativeMethods.SIF_ALL
+            };
+
+            NativeMethods.GetScrollInfo(textBox.Handle, NativeMethods.SB_VERT, ref updatedInfo);
+
+            if (wasAtBottom)
             {
                 textBox.SelectionStart = textBox.TextLength;
                 textBox.SelectionLength = 0;
-            }
-            else
-            {
-                textBox.SelectionStart = Math.Min(oldSelectionStart, Math.Max(0, textBox.TextLength - 1));
-                textBox.SelectionLength = 0;
+                textBox.ScrollToCaret();
+                return;
             }
 
-            textBox.ScrollToCaret();
+            var targetPos = Math.Max(0, Math.Min(previousPos, updatedInfo.nMax - (int)updatedInfo.nPage + 1));
+
+            updatedInfo.nPos = targetPos;
+            updatedInfo.fMask = NativeMethods.SIF_POS;
+
+            NativeMethods.SetScrollInfo(textBox.Handle, NativeMethods.SB_VERT, ref updatedInfo, true);
+            NativeMethods.SendMessage(
+                textBox.Handle,
+                NativeMethods.WM_VSCROLL,
+                new IntPtr(NativeMethods.MakeWParam(NativeMethods.SB_THUMBPOSITION, targetPos)),
+                IntPtr.Zero);
         }
         finally
         {
-            if (textBox.IsHandleCreated)
-            {
-                NativeMethods.SendMessage(textBox.Handle, NativeMethods.WM_SETREDRAW, new IntPtr(1), IntPtr.Zero);
-                textBox.Invalidate();
-            }
-
+            NativeMethods.SendMessage(textBox.Handle, NativeMethods.WM_SETREDRAW, new IntPtr(1), IntPtr.Zero);
+            textBox.Invalidate();
             textBox.ResumeLayout();
         }
     }
