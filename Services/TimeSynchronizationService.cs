@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using LaserTag.Defusal.Domain;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -10,11 +12,13 @@ namespace LaserTag.Defusal.Services;
 /// </summary>
 public sealed class TimeSynchronizationService
 {
+    private const int OffsetWindowSize = 20;
+
     private readonly MatchOptions _options;
     private readonly ILogger<TimeSynchronizationService> _logger;
     private readonly object _sync = new();
 
-    private bool _isSynced;
+    private readonly Queue<long> _offsetWindow = new();
     private TimeSpan _timeOffset = TimeSpan.Zero;
     private DateTimeOffset _lastHeartbeat = DateTimeOffset.MinValue;
     private long? _lastUptimeMs;
@@ -39,24 +43,32 @@ public sealed class TimeSynchronizationService
         {
             if (uptimeMs is not null && _lastUptimeMs is not null && uptimeMs.Value < _lastUptimeMs.Value)
             {
-                _isSynced = false;
-                _logger.LogInformation("Prop uptime decreased from {Previous}ms to {Current}ms; invalidating time offset", _lastUptimeMs, uptimeMs);
+                ResetSynchronizationState(
+                    now,
+                    "Prop uptime decreased from {Previous}ms to {Current}ms; invalidating time offset",
+                    _lastUptimeMs,
+                    uptimeMs);
             }
 
-            if (_isSynced && (now - _lastHeartbeat).TotalSeconds > _options.PropSessionTimeoutSeconds)
+            if (_offsetWindow.Count > 0 && (now - _lastHeartbeat).TotalSeconds > _options.PropSessionTimeoutSeconds)
             {
-                _isSynced = false;
-                _logger.LogInformation(
+                ResetSynchronizationState(
+                    now,
                     "Prop session timed out after {TimeoutSeconds}s; invalidating time offset",
                     _options.PropSessionTimeoutSeconds);
             }
 
-            if (!_isSynced)
+            var offsetMs = now.ToUnixTimeMilliseconds() - inputTimeMs;
+            _offsetWindow.Enqueue(offsetMs);
+
+            while (_offsetWindow.Count > OffsetWindowSize)
             {
-                var offsetMs = now.ToUnixTimeMilliseconds() - inputTimeMs;
-                _timeOffset = TimeSpan.FromMilliseconds(offsetMs);
-                _isSynced = true;
-                _logger.LogInformation("New Prop session established. Offset: {Offset}ms", offsetMs);
+                _offsetWindow.Dequeue();
+            }
+
+            if (_offsetWindow.Count > 0)
+            {
+                _timeOffset = TimeSpan.FromMilliseconds(MaxOffset());
             }
 
             _lastHeartbeat = now;
@@ -77,6 +89,17 @@ public sealed class TimeSynchronizationService
             }
         }
     }
+
+    private void ResetSynchronizationState(DateTimeOffset now, string messageTemplate, params object?[] args)
+    {
+        _offsetWindow.Clear();
+        _timeOffset = TimeSpan.Zero;
+        _lastHeartbeat = now;
+        _lastUptimeMs = null;
+        _logger.LogInformation(messageTemplate, args);
+    }
+
+    private long MaxOffset() => _offsetWindow.Max();
 
     private static long NormalizeTimestampToMilliseconds(long timestamp)
     {

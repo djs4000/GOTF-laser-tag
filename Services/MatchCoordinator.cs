@@ -194,11 +194,7 @@ public sealed class MatchCoordinator : IDisposable
         {
             var status = CurrentSnapshot.LifecycleState.ToString();
             var remaining = CurrentSnapshot.RemainingTimeMs ?? _lastMatchRemainingMs ?? 0;
-            var timestamp = _lastSnapshotTimestamp != 0
-                ? _lastSnapshotTimestamp
-                : _lastPropTimestamp != 0
-                    ? _lastPropTimestamp
-                    : requestTimestamp;
+            var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
             return new PropUpdateResponseDto
             {
@@ -595,7 +591,8 @@ public sealed class MatchCoordinator : IDisposable
     {
         if (_lastPropPayload is { } prop)
         {
-            var timestamp = prop.Timestamp != 0 ? prop.Timestamp : fallbackTimestamp;
+            var normalizedTime = _timeSyncService.NormalizePropTime(prop.Timestamp, prop.UptimeMs);
+            var timestamp = normalizedTime.ToUnixTimeMilliseconds();
             return new PropStatusDto
             {
                 Timestamp = timestamp,
