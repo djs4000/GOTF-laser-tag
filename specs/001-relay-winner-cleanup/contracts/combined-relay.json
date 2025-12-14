@@ -2,11 +2,15 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "CombinedRelayPayload",
   "type": "object",
-  "required": ["match", "prop", "timestamp"],
+  "required": ["attacking_team", "match", "prop", "timestamp"],
   "properties": {
     "timestamp": {
       "type": "integer",
       "description": "Source event timestamp that triggered this relay payload."
+    },
+    "attacking_team": {
+      "type": "string",
+      "description": "The attacking team label configured for the current match."
     },
     "winner_reason": {
       "type": ["string", "null"],

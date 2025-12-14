@@ -764,6 +764,7 @@ public class MatchCoordinatorTests
             return new CombinedRelayPayload
             {
                 Timestamp = payload.Timestamp,
+                AttackingTeam = payload.AttackingTeam,
                 WinnerReason = payload.WinnerReason,
                 Match = CloneMatch(payload.Match),
                 Prop = CloneProp(payload.Prop)
@@ -860,6 +861,11 @@ public class MatchCoordinatorTests
             if (_rootRequired.Contains("timestamp") && payload.Timestamp <= 0)
             {
                 throw new XunitException("Combined relay payload timestamp must be greater than zero.");
+            }
+
+            if (_rootRequired.Contains("attacking_team") && string.IsNullOrWhiteSpace(payload.AttackingTeam))
+            {
+                throw new XunitException("Combined relay payload attacking_team is required.");
             }
 
             if (_rootRequired.Contains("match"))
