@@ -253,6 +253,23 @@ public class MatchCoordinatorTests
     }
 
     [Fact]
+    public async Task PropUpdatesDoNotRelayBeforeMatchBegins()
+    {
+        var (coordinator, _, relay) = CreateCoordinator();
+        relay.IsEnabled = true;
+
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Ready, Timestamp = 1 }, CancellationToken.None);
+
+        Assert.Empty(relay.Payloads);
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("start", MatchSnapshotStatus.WaitingOnStart, 400_000, 2), CancellationToken.None);
+        await relay.WaitForPayloadsAsync(1, TimeSpan.FromSeconds(1));
+
+        Assert.Single(relay.Payloads);
+        Assert.Equal(PropState.Ready, relay.Payloads[0].Prop.State);
+    }
+
+    [Fact]
     public async Task IgnoresUnexpectedMatchIdWhileActive()
     {
         var (coordinator, _, _) = CreateCoordinator();
@@ -279,6 +296,26 @@ public class MatchCoordinatorTests
 
         var snapshot = coordinator.Snapshot();
         Assert.Equal(PropState.Ready, snapshot.PropState);
+    }
+
+    [Fact]
+    public async Task FinalRelayStopsFurtherTransmissions()
+    {
+        var (coordinator, _, relay) = CreateCoordinator();
+        relay.IsEnabled = true;
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("final", MatchSnapshotStatus.WaitingOnStart, 400_000, 1), CancellationToken.None);
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("final", MatchSnapshotStatus.Running, 350_000, 2), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Defused, Timestamp = 3 }, CancellationToken.None);
+
+        await relay.WaitForPayloadsAsync(3, TimeSpan.FromSeconds(1));
+
+        Assert.True(relay.Payloads.Last().Match.IsLastSend);
+
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Defused, Timestamp = 4 }, CancellationToken.None);
+        await Task.Delay(50);
+
+        Assert.Equal(3, relay.Payloads.Count);
     }
 
     [Fact]
@@ -728,6 +765,12 @@ public class MatchCoordinatorTests
             {
                 await Task.Delay(ArtificialDelay, cancellationToken).ConfigureAwait(false);
             }
+        }
+
+        public async Task<RelaySendResult> RelayWithResponseAsync(CombinedRelayPayload payload, CancellationToken cancellationToken)
+        {
+            await TryRelayCombinedAsync(payload, cancellationToken).ConfigureAwait(false);
+            return new RelaySendResult(true, 200, null);
         }
 
         public Task WaitForPayloadsAsync(int expectedCount, TimeSpan timeout, CancellationToken cancellationToken = default)
