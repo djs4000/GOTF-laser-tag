@@ -52,6 +52,8 @@ public sealed class MatchCoordinator : IDisposable
     private DateTimeOffset? _propTimerSyncedAt;
     private string _attackingTeam = "Team 1";
     private CancellationTokenSource? _finalDataTimeoutCts;
+    private bool _relayHoldActive;
+    private bool _finalPayloadSent;
 
     public event EventHandler<MatchStateSnapshot>? SnapshotUpdated;
 
@@ -219,6 +221,7 @@ public sealed class MatchCoordinator : IDisposable
 
         lock (_sync)
         {
+            var previousStatus = _lastSnapshotPayload?.Status;
             var now = DateTimeOffset.UtcNow;
             var sourceTimestamp = ParseSnapshotTimestamp(dto.Timestamp, now);
             var observedLatency = now - sourceTimestamp;
@@ -320,6 +323,7 @@ public sealed class MatchCoordinator : IDisposable
                 case MatchSnapshotStatus.WaitingOnFinalData:
                     _lifecycleState = MatchLifecycleState.WaitingOnFinalData;
                     _matchEnded = true;
+                    _relayHoldActive = true;
                     break;
                 case MatchSnapshotStatus.Completed:
                     _lifecycleState = MatchLifecycleState.Completed;
@@ -339,12 +343,19 @@ public sealed class MatchCoordinator : IDisposable
                     break;
             }
 
+            if (previousStatus == MatchSnapshotStatus.Running && dto.Status != MatchSnapshotStatus.Running)
+            {
+                _relayHoldActive = true;
+                _finalPayloadSent = false;
+            }
+
             if (dto.IsLastSend)
             {
                 _matchEnded = true;
             }
 
-            PublishSnapshotLocked("Match update", eventTimestamp: dto.Timestamp);
+            var forceRelay = dto.IsLastSend && _matchEnded;
+            PublishSnapshotLocked("Match update", forceRelay: forceRelay, eventTimestamp: dto.Timestamp);
         }
 
         if (shouldTriggerEnd)
@@ -495,7 +506,9 @@ public sealed class MatchCoordinator : IDisposable
             _lastMatchRemainingMs = 0;
         }
 
-            _lastActionDescription = $"Ended: {reason}";
+        _relayHoldActive = true;
+        _finalPayloadSent = false;
+        _lastActionDescription = $"Ended: {reason}";
     }
 
     private void TryResolveEliminationWinnerLocked(IReadOnlyList<MatchPlayerSnapshotDto> players)
@@ -560,6 +573,11 @@ public sealed class MatchCoordinator : IDisposable
                 ? snapshot.Timestamp
                 : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var status = snapshot.Status;
+            if (forceRelay && _matchEnded && !IsTerminalStatus(status))
+            {
+                status = MatchSnapshotStatus.Completed;
+            }
+
             var isLastSend = snapshot.IsLastSend || (forceRelay && IsTerminalStatus(status));
 
             return new MatchSnapshotDto
@@ -580,12 +598,18 @@ public sealed class MatchCoordinator : IDisposable
             : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var fallbackRemaining = _lastMatchRemainingMs ?? (int)(_matchOptions.LtDisplayedDurationSec * 1000);
 
+        var fallbackStatus = MapLifecycleToSnapshotStatus(_lifecycleState);
+        if (forceRelay && _matchEnded && !IsTerminalStatus(fallbackStatus))
+        {
+            fallbackStatus = MatchSnapshotStatus.Completed;
+        }
+
         return new MatchSnapshotDto
         {
             Id = fallbackId,
             Timestamp = fallbackTimestamp,
             IsLastSend = forceRelay && _matchEnded,
-            Status = MapLifecycleToSnapshotStatus(_lifecycleState),
+            Status = fallbackStatus,
             RemainingTimeMs = fallbackRemaining,
             WinnerTeam = _winnerTeam,
             Players = Array.Empty<MatchPlayerSnapshotDto>()
@@ -721,9 +745,16 @@ public sealed class MatchCoordinator : IDisposable
         var teamPlayerCounts = BuildTeamPlayerCounts(players);
 
         var combinedRelayPayload = BuildCombinedPayloadLocked(forceRelay, eventTimestamp);
-        if (_relayService.IsEnabled)
+        var shouldRelay = _relayService.IsEnabled && !_finalPayloadSent && (!_relayHoldActive || forceRelay);
+        if (shouldRelay)
         {
             _ = _relayService.TryRelayCombinedAsync(combinedRelayPayload, CancellationToken.None);
+            if (forceRelay)
+            {
+                _finalPayloadSent = true;
+                _relayHoldActive = false;
+                CancelFinalDataTimeoutLocked();
+            }
         }
 
         var snapshot = new MatchStateSnapshot(
@@ -841,6 +872,8 @@ public sealed class MatchCoordinator : IDisposable
         _winnerTeam = null;
         _winnerReason = null;
         CancelFinalDataTimeoutLocked();
+        _relayHoldActive = false;
+        _finalPayloadSent = false;
     }
 
     private static DateTimeOffset ParseSnapshotTimestamp(long timestamp, DateTimeOffset fallback)
