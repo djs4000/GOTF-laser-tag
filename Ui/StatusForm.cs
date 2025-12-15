@@ -35,6 +35,7 @@ public sealed class StatusForm : Form
     private readonly Label _httpLabel = new();
     private readonly Label _stateLabel = new();
     private readonly Label _overtimeLabel = new();
+    private readonly Label _relayStatusLabel = new();
     private readonly Label _propLabel = new();
     private readonly Label _plantLabel = new();
     private readonly Label _matchLatencyLabel = new();
@@ -221,8 +222,15 @@ public sealed class StatusForm : Form
         _overtimeLabel.ForeColor = Color.White;
         _overtimeLabel.Text = "OVERTIME";
 
+        _relayStatusLabel.AutoSize = true;
+        _relayStatusLabel.Margin = new Padding(8, 0, 0, 0);
+        _relayStatusLabel.ForeColor = Color.DimGray;
+        _relayStatusLabel.AutoEllipsis = true;
+        _relayStatusLabel.MaximumSize = new Size(Scale(360), 0);
+
         panel.Controls.Add(_stateLabel);
         panel.Controls.Add(_overtimeLabel);
+        panel.Controls.Add(_relayStatusLabel);
         return panel;
     }
 
@@ -759,6 +767,33 @@ public sealed class StatusForm : Form
         }
     }
 
+    private void UpdateRelayStatus(MatchStateSnapshot snapshot)
+    {
+        if (!snapshot.RelayEnabled)
+        {
+            _relayStatusLabel.Text = "Relay disabled";
+            _relayStatusLabel.ForeColor = Color.DimGray;
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(snapshot.RelayError))
+        {
+            _relayStatusLabel.Text = $"Relay error: {snapshot.RelayError}";
+            _relayStatusLabel.ForeColor = Color.DarkRed;
+            return;
+        }
+
+        if (snapshot.RelaySending)
+        {
+            _relayStatusLabel.Text = "Relay active";
+            _relayStatusLabel.ForeColor = Color.DarkGreen;
+            return;
+        }
+
+        _relayStatusLabel.Text = "Relay ready";
+        _relayStatusLabel.ForeColor = Color.DarkOrange;
+    }
+
     private void RenderSnapshot()
     {
         if (!IsHandleCreated)
@@ -799,6 +834,8 @@ public sealed class StatusForm : Form
         _stateLabel.Text = hasMatchData
             ? snapshot.LifecycleState.ToString()
             : "—";
+
+        UpdateRelayStatus(snapshot);
 
         var hasPropData = snapshot.LastPropUpdate is not null
             || snapshot.PropTimerRemainingMs is not null
@@ -1154,5 +1191,6 @@ public sealed class StatusForm : Form
         ConfigureChecklistLabel(_teamNamesCheckLabel);
         ConfigureChecklistLabel(_playerNamesCheckLabel);
         _matchDurationNoticeLabel.MaximumSize = new Size(Scale(320), 0);
+        _relayStatusLabel.MaximumSize = new Size(Scale(360), 0);
     }
 }
