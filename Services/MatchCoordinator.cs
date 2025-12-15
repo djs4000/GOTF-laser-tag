@@ -359,7 +359,10 @@ public sealed class MatchCoordinator : IDisposable
             if (dto.IsLastSend)
             {
                 _matchEnded = true;
-                if (_suppressRelayUntilFinalData)
+                var holdingForFinalData = _suppressRelayUntilFinalData
+                    && _lifecycleState == MatchLifecycleState.WaitingOnFinalData;
+
+                if (!holdingForFinalData && _suppressRelayUntilFinalData)
                 {
                     _suppressRelayUntilFinalData = false;
                     forceFinalRelay = true;
