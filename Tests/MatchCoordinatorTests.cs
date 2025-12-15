@@ -319,6 +319,37 @@ public class MatchCoordinatorTests
     }
 
     [Fact]
+    public async Task CompletedSnapshotIsSentOnceAndMarkedFinal()
+    {
+        var options = new MatchOptions
+        {
+            LtDisplayedDurationSec = 400,
+            AutoEndNoPlantAtSec = 180,
+            DefuseWindowSec = 40,
+            ClockExpectedHz = 10,
+            FinalDataTimeoutMs = 50
+        };
+
+        var (coordinator, _, relay) = CreateCoordinator(options);
+        relay.IsEnabled = true;
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.WaitingOnStart, 400_000, 1), CancellationToken.None);
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 350_000, 2), CancellationToken.None);
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Completed, 0, 3, isLastSend: false), CancellationToken.None);
+
+        await relay.WaitForPayloadsAsync(3, TimeSpan.FromSeconds(1));
+
+        var completedPayloads = relay.Payloads.Where(payload => payload.Match.Status == MatchSnapshotStatus.Completed).ToArray();
+        Assert.Single(completedPayloads);
+        Assert.True(completedPayloads[0].Match.IsLastSend);
+        Assert.Equal(relay.Payloads.Last(), completedPayloads[0]);
+
+        await Task.Delay(options.FinalDataTimeoutMs * 2);
+
+        Assert.Equal(3, relay.Payloads.Count);
+    }
+
+    [Fact]
     public async Task ParsesUnixSecondTimestampsForLatency()
     {
         var options = new MatchOptions

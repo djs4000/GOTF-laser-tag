@@ -578,7 +578,10 @@ public sealed class MatchCoordinator : IDisposable
                 ? snapshot.Timestamp
                 : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var status = snapshot.Status;
-            var isLastSend = snapshot.IsLastSend || (forceRelay && (_matchEnded || IsTerminalStatus(status)));
+            var isTerminal = _matchEnded || IsTerminalStatus(status);
+            var isLastSend = snapshot.IsLastSend
+                || status == MatchSnapshotStatus.Completed
+                || (forceRelay && isTerminal);
 
             return new MatchSnapshotDto
             {
@@ -602,7 +605,7 @@ public sealed class MatchCoordinator : IDisposable
         {
             Id = fallbackId,
             Timestamp = fallbackTimestamp,
-            IsLastSend = forceRelay && _matchEnded,
+            IsLastSend = (_lifecycleState == MatchLifecycleState.Completed) || (forceRelay && _matchEnded),
             Status = MapLifecycleToSnapshotStatus(_lifecycleState),
             RemainingTimeMs = fallbackRemaining,
             WinnerTeam = _winnerTeam,
@@ -783,6 +786,7 @@ public sealed class MatchCoordinator : IDisposable
             {
                 _relayFinalized = true;
                 _relayActive = false;
+                CancelFinalDataTimeoutLocked();
             }
 
             _ = SendRelayAsync(combinedRelayPayload);
