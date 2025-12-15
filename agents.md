@@ -26,7 +26,8 @@
   * If **planted at ≥ 180 s elapsed**, allow **40 s overtime** (defuse window). Overtime ends after the defuse window expires or on defuse/explosion.  
   * **Exploded** or **Defused** → immediate end.  
   * **During countdown states**, ignore prop events.  
-* **Relay**: Forwards a **Combined Payload** (Match \+ Prop) to a single downstream endpoint.  
+* **Relay**: Forwards a **Combined Payload** (Match \+ Prop) to a single downstream endpoint.
+  * When the host transitions to **WaitingOnFinalData**, pause relay cadence entirely. Resume only to emit a single final Combined Payload once `is_last_send` is received (or after the final-data timeout elapses), then halt sending again.
 * **Focus Trigger**: Targets window titled ICE (process ICombat.Desktop), restores if minimized, brings to front, then sends Ctrl+S via SendInput.
 
 ## **Topology**

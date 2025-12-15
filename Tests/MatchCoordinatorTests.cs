@@ -350,6 +350,77 @@ public class MatchCoordinatorTests
     }
 
     [Fact]
+    public async Task WaitingOnFinalDataPausesRelayUntilFinalPayload()
+    {
+        var options = new MatchOptions
+        {
+            LtDisplayedDurationSec = 400,
+            AutoEndNoPlantAtSec = 180,
+            DefuseWindowSec = 40,
+            ClockExpectedHz = 10,
+            FinalDataTimeoutMs = 500
+        };
+
+        var (coordinator, _, relay) = CreateCoordinator(options);
+        relay.IsEnabled = true;
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.WaitingOnStart, 400_000, 1), CancellationToken.None);
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 350_000, 2), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Armed, Timestamp = 3 }, CancellationToken.None);
+
+        await relay.WaitForPayloadsAsync(3, TimeSpan.FromSeconds(1));
+
+        var payloadCountBeforeFinalData = relay.Payloads.Count;
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.WaitingOnFinalData, 0, 4), CancellationToken.None);
+        await coordinator.UpdatePropAsync(new PropStatusDto { State = PropState.Defused, Timestamp = 5 }, CancellationToken.None);
+        await Task.Delay(100);
+
+        Assert.Equal(payloadCountBeforeFinalData, relay.Payloads.Count);
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Completed, 0, 6, isLastSend: true), CancellationToken.None);
+        await relay.WaitForPayloadsAsync(payloadCountBeforeFinalData + 1, TimeSpan.FromSeconds(1));
+
+        Assert.Equal(payloadCountBeforeFinalData + 1, relay.Payloads.Count);
+        Assert.True(relay.Payloads.Last().Match.IsLastSend);
+    }
+
+    [Fact]
+    public async Task FinalDataTimeoutForcesSingleRelayAfterPause()
+    {
+        var options = new MatchOptions
+        {
+            LtDisplayedDurationSec = 400,
+            AutoEndNoPlantAtSec = 180,
+            DefuseWindowSec = 40,
+            ClockExpectedHz = 10,
+            FinalDataTimeoutMs = 50
+        };
+
+        var (coordinator, _, relay) = CreateCoordinator(options);
+        relay.IsEnabled = true;
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.WaitingOnStart, 400_000, 1), CancellationToken.None);
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Running, 350_000, 2), CancellationToken.None);
+
+        await relay.WaitForPayloadsAsync(2, TimeSpan.FromSeconds(1));
+
+        var payloadCountBeforePause = relay.Payloads.Count;
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.WaitingOnFinalData, 0, 3), CancellationToken.None);
+
+        await Task.Delay(options.FinalDataTimeoutMs * 2);
+
+        Assert.Equal(payloadCountBeforePause + 1, relay.Payloads.Count);
+        Assert.True(relay.Payloads.Last().Match.IsLastSend);
+
+        await coordinator.UpdateMatchSnapshotAsync(NewSnapshot("match", MatchSnapshotStatus.Completed, 0, 4, isLastSend: true), CancellationToken.None);
+        await Task.Delay(50);
+
+        Assert.Equal(payloadCountBeforePause + 1, relay.Payloads.Count);
+    }
+
+    [Fact]
     public async Task ParsesUnixSecondTimestampsForLatency()
     {
         var options = new MatchOptions
