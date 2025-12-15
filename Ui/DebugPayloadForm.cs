@@ -234,6 +234,7 @@ public sealed class DebugPayloadForm : Form
         return $$"""
         {
           "timestamp": {{timestamp}},
+          "attacking_team": "Team 1",
           "match": {
             "id": "debug-match",
             "status": "Running",

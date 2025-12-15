@@ -95,6 +95,7 @@ public sealed class DebugPayloadService
         return new CombinedRelayPayload
         {
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            AttackingTeam = ResolveAttackingTeam(),
             WinnerReason = null,
             Match = match,
             Prop = fallback
@@ -118,10 +119,16 @@ public sealed class DebugPayloadService
         return new CombinedRelayPayload
         {
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            AttackingTeam = ResolveAttackingTeam(),
             WinnerReason = null,
             Match = fallback,
             Prop = prop
         };
+    }
+
+    private string ResolveAttackingTeam()
+    {
+        return _snapshotCache.GetSnapshot().Payload?.AttackingTeam ?? "Team 1";
     }
 
     private static PropStatusDto BuildPlaceholderProp()

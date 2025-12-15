@@ -545,6 +545,7 @@ public sealed class MatchCoordinator : IDisposable
         return new CombinedRelayPayload
         {
             Timestamp = timestamp,
+            AttackingTeam = AttackingTeam,
             WinnerReason = _winnerReason,
             Match = matchPayload,
             Prop = propPayload

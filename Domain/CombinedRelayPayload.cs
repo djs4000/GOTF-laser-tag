@@ -12,6 +12,9 @@ public sealed class CombinedRelayPayload
     [JsonPropertyName("timestamp")]
     public long Timestamp { get; init; }
 
+    [JsonPropertyName("attacking_team")]
+    public required string AttackingTeam { get; init; }
+
     [JsonPropertyName("winner_reason")]
     public WinnerReason? WinnerReason { get; init; }
 
@@ -27,6 +30,11 @@ public sealed class CombinedRelayPayload
     public bool TryValidate(out IReadOnlyList<string> errors)
     {
         var issues = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(AttackingTeam))
+        {
+            issues.Add("attacking_team is required.");
+        }
 
         if (Match is null)
         {
