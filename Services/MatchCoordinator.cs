@@ -583,13 +583,24 @@ public sealed class MatchCoordinator : IDisposable
                 winnerReason ??= WinnerReason.ObjectiveDetonated;
                 winDetected = true;
             }
-            else if (IsMatchTimerExpired(snapshot.RemainingTimeMs ?? _lastMatchRemainingMs))
+
+            if (!winDetected)
             {
-                winnerTeam ??= DefendingTeam;
-                winnerReason ??= WinnerReason.TimeExpiration;
-                winDetected = true;
+                int? remainingForWinCheck = snapshot.RemainingTimeMs;
+                if (remainingForWinCheck is null && _lastMatchRemainingMs is not null)
+                {
+                    remainingForWinCheck = _lastMatchRemainingMs;
+                }
+
+                if (IsMatchTimerExpired(remainingForWinCheck))
+                {
+                    winnerTeam ??= DefendingTeam;
+                    winnerReason ??= WinnerReason.TimeExpiration;
+                    winDetected = true;
+                }
             }
-            else if (TryDetectEliminationWinner(snapshot.Players ?? Array.Empty<MatchPlayerSnapshotDto>(), out var eliminationWinner))
+
+            if (!winDetected && TryDetectEliminationWinner(snapshot.Players ?? Array.Empty<MatchPlayerSnapshotDto>(), out var eliminationWinner))
             {
                 winnerTeam ??= eliminationWinner;
                 winnerReason ??= WinnerReason.TeamElimination;
@@ -642,8 +653,9 @@ public sealed class MatchCoordinator : IDisposable
         }
 
         winnerTeam = aliveTeams[0].Team;
+        var resolvedWinnerTeam = winnerTeam;
         var opposingTeamPresent = teamCounts.Any(team =>
-            !string.Equals(team.Team, winnerTeam, StringComparison.OrdinalIgnoreCase)
+            !string.Equals(team.Team, resolvedWinnerTeam, StringComparison.OrdinalIgnoreCase)
             && team.Total > 0);
 
         return opposingTeamPresent;
