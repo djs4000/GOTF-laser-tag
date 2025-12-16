@@ -52,6 +52,7 @@ public sealed class MatchCoordinator : IDisposable
     private DateTimeOffset? _propTimerSyncedAt;
     private string _attackingTeam = "Team 1";
     private CancellationTokenSource? _finalDataTimeoutCts;
+    private bool _relayFinalizedForCurrentMatch;
 
     public event EventHandler<MatchStateSnapshot>? SnapshotUpdated;
 
@@ -216,6 +217,8 @@ public sealed class MatchCoordinator : IDisposable
     {
         bool shouldTriggerEnd = false;
         string? triggerReason = null;
+        CombinedRelayPayload? relayPayload = null;
+        bool shouldRelayPayload = false;
 
         lock (_sync)
         {
@@ -243,6 +246,7 @@ public sealed class MatchCoordinator : IDisposable
             }
             else if (isNewMatchId)
             {
+                _relayFinalizedForCurrentMatch = false;
                 var isTerminal = _matchEnded && IsTerminalState(_lifecycleState);
                 var isStartingState = dto.Status is MatchSnapshotStatus.WaitingOnStart or MatchSnapshotStatus.Countdown or MatchSnapshotStatus.Running;
 
@@ -344,7 +348,24 @@ public sealed class MatchCoordinator : IDisposable
                 _matchEnded = true;
             }
 
-            PublishSnapshotLocked("Match update", eventTimestamp: dto.Timestamp);
+            var relayOverrides = BuildRelayOverridesLocked(dto);
+            relayPayload = BuildCombinedPayloadLocked(
+                forceRelay: relayOverrides.IsLastSendOverride ?? false,
+                eventTimestamp: dto.Timestamp,
+                overrides: relayOverrides);
+
+            shouldRelayPayload = IsRelayActiveStatus(dto.Status) && !_relayFinalizedForCurrentMatch;
+            if (shouldRelayPayload && relayOverrides.FinalizeRelay)
+            {
+                _relayFinalizedForCurrentMatch = true;
+            }
+
+            PublishSnapshotLocked("Match update", relayPayload, eventTimestamp: dto.Timestamp);
+        }
+
+        if (shouldRelayPayload && relayPayload is not null && _relayService.IsEnabled)
+        {
+            _ = _relayService.TryRelayCombinedAsync(relayPayload, CancellationToken.None);
         }
 
         if (shouldTriggerEnd)
@@ -417,13 +438,14 @@ public sealed class MatchCoordinator : IDisposable
             _lastActionDescription = "Idle (no match data)";
             _focusAcquired = false;
             _lastPropPayload = null;
-        _lastSnapshotPayload = null;
-        _propTimerRemainingMs = null;
-        _propTimerSyncedAt = null;
-        _winnerTeam = null;
-        _winnerReason = null;
-        PublishSnapshotLocked("Idle state");
-    }
+            _lastSnapshotPayload = null;
+            _propTimerRemainingMs = null;
+            _propTimerSyncedAt = null;
+            _winnerTeam = null;
+            _winnerReason = null;
+            _relayFinalizedForCurrentMatch = false;
+            PublishSnapshotLocked("Idle state");
+        }
     }
 
     /// <summary>
@@ -533,12 +555,106 @@ public sealed class MatchCoordinator : IDisposable
         SetWinnerLocked(winnerTeam, WinnerReason.TeamElimination, "All opposing players eliminated");
     }
 
+    private RelayBuildOverrides BuildRelayOverridesLocked(MatchSnapshotDto snapshot)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var winnerTeam = _winnerTeam;
+        var winnerReason = _winnerReason;
+        var winDetected = winnerTeam is not null && winnerReason is not null;
+
+        if (_propState == PropState.Detonated)
+        {
+            winnerTeam ??= AttackingTeam;
+            winnerReason ??= WinnerReason.ObjectiveDetonated;
+            winDetected = true;
+        }
+        else if (_propState == PropState.Defused)
+        {
+            winnerTeam ??= DefendingTeam;
+            winnerReason ??= WinnerReason.ObjectiveDefused;
+            winDetected = true;
+        }
+        else
+        {
+            var propTimerRemainingMs = GetPropTimerRemainingMs(now);
+            if (propTimerRemainingMs is not null && propTimerRemainingMs <= 0)
+            {
+                winnerTeam ??= AttackingTeam;
+                winnerReason ??= WinnerReason.ObjectiveDetonated;
+                winDetected = true;
+            }
+            else if (IsMatchTimerExpired(snapshot.RemainingTimeMs ?? _lastMatchRemainingMs))
+            {
+                winnerTeam ??= DefendingTeam;
+                winnerReason ??= WinnerReason.TimeExpiration;
+                winDetected = true;
+            }
+            else if (TryDetectEliminationWinner(snapshot.Players ?? Array.Empty<MatchPlayerSnapshotDto>(), out var eliminationWinner))
+            {
+                winnerTeam ??= eliminationWinner;
+                winnerReason ??= WinnerReason.TeamElimination;
+                winDetected = true;
+            }
+        }
+
+        if (winDetected && winnerTeam is not null && winnerReason is not null)
+        {
+            SetWinnerLocked(winnerTeam, winnerReason.Value, "Relay override");
+            return new RelayBuildOverrides(
+                StatusOverride: MatchSnapshotStatus.Completed,
+                IsLastSendOverride: true,
+                WinnerTeamOverride: winnerTeam,
+                WinnerReasonOverride: winnerReason,
+                FinalizeRelay: true);
+        }
+
+        return new RelayBuildOverrides(
+            StatusOverride: null,
+            IsLastSendOverride: null,
+            WinnerTeamOverride: null,
+            WinnerReasonOverride: winnerReason,
+            FinalizeRelay: false);
+    }
+
+    private sealed record RelayBuildOverrides(
+        MatchSnapshotStatus? StatusOverride,
+        bool? IsLastSendOverride,
+        string? WinnerTeamOverride,
+        WinnerReason? WinnerReasonOverride,
+        bool FinalizeRelay);
+
+    private bool TryDetectEliminationWinner(IReadOnlyList<MatchPlayerSnapshotDto> players, out string winnerTeam)
+    {
+        winnerTeam = string.Empty;
+        if (players is null || players.Count == 0)
+        {
+            return false;
+        }
+
+        var teamCounts = BuildTeamPlayerCounts(players);
+        var aliveTeams = teamCounts
+            .Where(team => team.Alive > 0 && !string.Equals(team.Team, "Unknown", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        if (aliveTeams.Length != 1)
+        {
+            return false;
+        }
+
+        winnerTeam = aliveTeams[0].Team;
+        var opposingTeamPresent = teamCounts.Any(team =>
+            !string.Equals(team.Team, winnerTeam, StringComparison.OrdinalIgnoreCase)
+            && team.Total > 0);
+
+        return opposingTeamPresent;
+    }
+
     /// <summary>
     /// Produces a combined payload using the latest buffered match and prop snapshots so every relay carries both components per AGENTS.md cadence rules.
     /// </summary>
-    private CombinedRelayPayload BuildCombinedPayloadLocked(bool forceRelay, long? eventTimestamp)
+    private CombinedRelayPayload BuildCombinedPayloadLocked(bool forceRelay, long? eventTimestamp, RelayBuildOverrides? overrides = null)
     {
-        var matchPayload = BuildRelayMatchSnapshotLocked(forceRelay);
+        var matchPayload = BuildRelayMatchSnapshotLocked(forceRelay, overrides);
         var propPayload = BuildRelayPropSnapshotLocked(matchPayload.Timestamp);
         var timestamp = ResolveRelayTimestamp(eventTimestamp, matchPayload.Timestamp, propPayload.Timestamp);
 
@@ -546,21 +662,27 @@ public sealed class MatchCoordinator : IDisposable
         {
             Timestamp = timestamp,
             AttackingTeam = AttackingTeam,
-            WinnerReason = _winnerReason,
+            WinnerReason = overrides?.WinnerReasonOverride ?? _winnerReason,
             Match = matchPayload,
             Prop = propPayload
         };
     }
 
-    private MatchSnapshotDto BuildRelayMatchSnapshotLocked(bool forceRelay)
+    private MatchSnapshotDto BuildRelayMatchSnapshotLocked(bool forceRelay, RelayBuildOverrides? overrides)
     {
+        var statusOverride = overrides?.StatusOverride;
+        var isLastSendOverride = overrides?.IsLastSendOverride;
+        var winnerOverride = overrides?.WinnerTeamOverride;
+
         if (_lastSnapshotPayload is { } snapshot)
         {
             var timestamp = snapshot.Timestamp != 0
                 ? snapshot.Timestamp
                 : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var status = snapshot.Status;
-            var isLastSend = snapshot.IsLastSend || (forceRelay && IsTerminalStatus(status));
+            var status = statusOverride ?? snapshot.Status;
+            var isLastSend = isLastSendOverride
+                ?? snapshot.IsLastSend
+                || (forceRelay && IsTerminalStatus(status));
 
             return new MatchSnapshotDto
             {
@@ -569,7 +691,7 @@ public sealed class MatchCoordinator : IDisposable
                 IsLastSend = isLastSend,
                 Status = status,
                 RemainingTimeMs = snapshot.RemainingTimeMs,
-                WinnerTeam = _winnerTeam ?? snapshot.WinnerTeam,
+                WinnerTeam = winnerOverride ?? _winnerTeam ?? snapshot.WinnerTeam,
                 Players = snapshot.Players ?? Array.Empty<MatchPlayerSnapshotDto>()
             };
         }
@@ -580,14 +702,15 @@ public sealed class MatchCoordinator : IDisposable
             : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var fallbackRemaining = _lastMatchRemainingMs ?? (int)(_matchOptions.LtDisplayedDurationSec * 1000);
 
+        var fallbackStatus = statusOverride ?? MapLifecycleToSnapshotStatus(_lifecycleState);
         return new MatchSnapshotDto
         {
             Id = fallbackId,
             Timestamp = fallbackTimestamp,
-            IsLastSend = forceRelay && _matchEnded,
-            Status = MapLifecycleToSnapshotStatus(_lifecycleState),
+            IsLastSend = isLastSendOverride ?? (forceRelay && _matchEnded),
+            Status = fallbackStatus,
             RemainingTimeMs = fallbackRemaining,
-            WinnerTeam = _winnerTeam,
+            WinnerTeam = winnerOverride ?? _winnerTeam,
             Players = Array.Empty<MatchPlayerSnapshotDto>()
         };
     }
@@ -706,7 +829,17 @@ public sealed class MatchCoordinator : IDisposable
         return null;
     }
 
-    private void PublishSnapshotLocked(string source, bool forceRelay = false, long? eventTimestamp = null)
+    private static bool IsMatchTimerExpired(int? remainingTimeMs)
+    {
+        return remainingTimeMs is not null && remainingTimeMs <= 0;
+    }
+
+    private static bool IsRelayActiveStatus(MatchSnapshotStatus status)
+    {
+        return status is MatchSnapshotStatus.WaitingOnStart or MatchSnapshotStatus.Countdown or MatchSnapshotStatus.Running;
+    }
+
+    private void PublishSnapshotLocked(string source, CombinedRelayPayload? combinedRelayPayload = null, long? eventTimestamp = null)
     {
         var now = DateTimeOffset.UtcNow;
         var overtimeActive = _plantTimeSec is not null && _plantTimeSec.Value >= _matchOptions.AutoEndNoPlantAtSec && !_matchEnded;
@@ -720,11 +853,7 @@ public sealed class MatchCoordinator : IDisposable
         var players = _lastSnapshotPayload?.Players ?? Array.Empty<MatchPlayerSnapshotDto>();
         var teamPlayerCounts = BuildTeamPlayerCounts(players);
 
-        var combinedRelayPayload = BuildCombinedPayloadLocked(forceRelay, eventTimestamp);
-        if (_relayService.IsEnabled)
-        {
-            _ = _relayService.TryRelayCombinedAsync(combinedRelayPayload, CancellationToken.None);
-        }
+        combinedRelayPayload ??= BuildCombinedPayloadLocked(forceRelay: false, eventTimestamp: eventTimestamp);
 
         var snapshot = new MatchStateSnapshot(
             MatchId: _currentMatchId,
@@ -841,6 +970,7 @@ public sealed class MatchCoordinator : IDisposable
         _winnerTeam = null;
         _winnerReason = null;
         CancelFinalDataTimeoutLocked();
+        _relayFinalizedForCurrentMatch = false;
     }
 
     private static DateTimeOffset ParseSnapshotTimestamp(long timestamp, DateTimeOffset fallback)
@@ -979,7 +1109,7 @@ public sealed class MatchCoordinator : IDisposable
                 }
 
                 _logger.LogWarning("Final data timeout - forcing relay");
-                PublishSnapshotLocked("Final Data Timeout", forceRelay: true);
+                PublishSnapshotLocked("Final Data Timeout");
                 CancelFinalDataTimeoutLocked();
             }
         });
