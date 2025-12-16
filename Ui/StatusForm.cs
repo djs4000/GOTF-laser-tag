@@ -44,6 +44,8 @@ public sealed class StatusForm : Form
     private readonly Label _playerCountsLabel = new();
     private readonly Label _focusLabel = new();
     private readonly Label _actionLabel = new();
+    private readonly Label _relayStatusLabel = new();
+    private readonly Label _relayErrorLabel = new();
     private readonly ComboBox _attackingTeamComboBox = new();
     private readonly Label _teamNamesCheckLabel = new();
     private readonly Label _playerNamesCheckLabel = new();
@@ -62,6 +64,7 @@ public sealed class StatusForm : Form
     private const int MinimumClientWidth = 900;
     private const int MinimumClientHeight = 600;
     private const int StackThresholdWidth = 1100;
+    private static readonly TimeSpan RelayActivityWindow = TimeSpan.FromSeconds(5);
     private double _debugElapsedSec;
     private double _debugTimerDurationSec;
     private MatchSnapshotStatus? _debugTimerStatus;
@@ -136,6 +139,7 @@ public sealed class StatusForm : Form
         matchRow = AddRow(matchSection.panel, matchRow, "Players", _playerCountsLabel);
         matchRow = AddRow(matchSection.panel, matchRow, "Timer", _matchTimerLabel);
         matchRow = AddRow(matchSection.panel, matchRow, "Latency", _matchLatencyLabel);
+        matchRow = AddRow(matchSection.panel, matchRow, "Relay", CreateRelayStatusPanel());
         layout.Controls.Add(matchSection.container, 0, 1);
 
         var propSection = CreateSectionPanel("Prop");
@@ -197,6 +201,7 @@ public sealed class StatusForm : Form
         _debugGameTimer = new System.Windows.Forms.Timer { Interval = 500 };
         _debugGameTimer.Tick += OnDebugTimerTick;
 
+        _snapshot = _coordinator.Snapshot();
         _coordinator.SnapshotUpdated += OnSnapshotUpdated;
         RenderSnapshot();
     }
@@ -223,6 +228,32 @@ public sealed class StatusForm : Form
 
         panel.Controls.Add(_stateLabel);
         panel.Controls.Add(_overtimeLabel);
+        return panel;
+    }
+
+    private Control CreateRelayStatusPanel()
+    {
+        var panel = new TableLayoutPanel
+        {
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1,
+            Margin = new Padding(0),
+            Padding = new Padding(0)
+        };
+
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+        _relayStatusLabel.AutoSize = true;
+        _relayStatusLabel.MaximumSize = new Size(Scale(360), 0);
+        _relayErrorLabel.AutoSize = true;
+        _relayErrorLabel.MaximumSize = new Size(Scale(360), 0);
+        _relayErrorLabel.ForeColor = Color.DarkRed;
+        _relayErrorLabel.Visible = false;
+
+        panel.Controls.Add(_relayStatusLabel, 0, 0);
+        panel.Controls.Add(_relayErrorLabel, 0, 1);
         return panel;
     }
 
@@ -647,6 +678,82 @@ public sealed class StatusForm : Form
         return string.Join(Environment.NewLine, lines);
     }
 
+    private static string FormatRelative(DateTimeOffset timestamp)
+    {
+        var age = DateTimeOffset.UtcNow - timestamp;
+        if (age < TimeSpan.Zero)
+        {
+            age = TimeSpan.Zero;
+        }
+
+        if (age < TimeSpan.FromSeconds(1))
+        {
+            return "<1s ago";
+        }
+
+        if (age < TimeSpan.FromMinutes(2))
+        {
+            return $"{age.TotalSeconds:F1}s ago";
+        }
+
+        return $"{age.TotalMinutes:F1}m ago";
+    }
+
+    private void RenderRelayStatus(RelayStatusSnapshot status)
+    {
+        if (!status.Enabled)
+        {
+            _relayStatusLabel.Text = "Relay disabled";
+            _relayStatusLabel.ForeColor = Color.DarkRed;
+            if (status.LastAttemptSucceeded == false && !string.IsNullOrWhiteSpace(status.LastErrorMessage))
+            {
+                var codeText = status.LastStatusCode.HasValue ? $"HTTP {status.LastStatusCode.Value}" : "No status";
+                _relayErrorLabel.Text = $"Last error: {codeText} - {status.LastErrorMessage}";
+                _relayErrorLabel.Visible = true;
+            }
+            else
+            {
+                _relayErrorLabel.Visible = false;
+                _relayErrorLabel.Text = string.Empty;
+            }
+
+            return;
+        }
+
+        var hasRecentAttempt = status.HasRecentActivity(RelayActivityWindow);
+        var lastAttemptText = status.LastAttemptUtc is { } lastAttempt
+            ? FormatRelative(lastAttempt)
+            : "awaiting first payload";
+        var activityText = status.IsSending
+            ? "sending now"
+            : hasRecentAttempt
+                ? $"last send {lastAttemptText}"
+                : $"idle ({lastAttemptText})";
+
+        if (status.LastAttemptSucceeded == false)
+        {
+            var codeText = status.LastStatusCode.HasValue ? $"HTTP {status.LastStatusCode.Value}" : "No status";
+            var errorDetails = string.IsNullOrWhiteSpace(status.LastErrorMessage) ? "Unknown error" : status.LastErrorMessage!;
+            var timeSuffix = status.LastAttemptUtc is { } time ? $" at {time:HH:mm:ss}" : string.Empty;
+            _relayStatusLabel.Text = $"Relay enabled ({activityText})";
+            _relayStatusLabel.ForeColor = Color.DarkRed;
+            _relayErrorLabel.Text = $"Last error: {codeText} - {errorDetails}{timeSuffix}";
+            _relayErrorLabel.Visible = true;
+            return;
+        }
+
+        var statusCodeText = status.LastAttemptSucceeded is null
+            ? "awaiting response"
+            : status.LastStatusCode.HasValue
+                ? $"HTTP {status.LastStatusCode.Value}"
+                : "no status code";
+
+        _relayStatusLabel.Text = $"Relay enabled ({statusCodeText}, {activityText})";
+        _relayStatusLabel.ForeColor = status.IsSending || hasRecentAttempt ? Color.DarkGreen : Color.DarkOrange;
+        _relayErrorLabel.Visible = false;
+        _relayErrorLabel.Text = string.Empty;
+    }
+
     private static double? CalculatePropTimerRemainingSeconds(MatchStateSnapshot snapshot)
     {
         if (snapshot.PropTimerRemainingMs is null)
@@ -817,6 +924,8 @@ public sealed class StatusForm : Form
         _playerCountsLabel.Text = FormatPlayerCounts(snapshot.TeamPlayerCounts);
 
         _propLatencyLabel.Text = FormatLatency(snapshot.PropLatency);
+
+        RenderRelayStatus(snapshot.RelayStatus);
 
         var propTimerRemainingSec = CalculatePropTimerRemainingSeconds(snapshot);
         if (propTimerRemainingSec is not null)
@@ -1154,5 +1263,7 @@ public sealed class StatusForm : Form
         ConfigureChecklistLabel(_teamNamesCheckLabel);
         ConfigureChecklistLabel(_playerNamesCheckLabel);
         _matchDurationNoticeLabel.MaximumSize = new Size(Scale(320), 0);
+        _relayStatusLabel.MaximumSize = new Size(Scale(360), 0);
+        _relayErrorLabel.MaximumSize = new Size(Scale(360), 0);
     }
 }

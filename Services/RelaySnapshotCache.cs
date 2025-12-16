@@ -43,14 +43,30 @@ public sealed class RelaySnapshotCache : IDisposable
         }
 
         RelaySnapshotState state;
+        var isNewPayload = false;
+        bool staleChanged;
         lock (_sync)
         {
-            _latestPayload = payload;
-            _lastUpdatedUtc = DateTimeOffset.UtcNow;
+            var previousStaleState = _lastStaleState;
+            isNewPayload = !ReferenceEquals(payload, _latestPayload);
+            if (isNewPayload)
+            {
+                _latestPayload = payload;
+                _lastUpdatedUtc = DateTimeOffset.UtcNow;
+            }
+
             state = BuildSnapshotUnsafe();
+            staleChanged = previousStaleState is null || previousStaleState.Value != state.IsStale;
         }
-        _logger.LogDebug("Cached combined relay payload timestamp {Timestamp}.", payload.Timestamp);
-        SnapshotChanged?.Invoke(this, new RelaySnapshotEventArgs(state));
+        if (isNewPayload)
+        {
+            _logger.LogDebug("Cached combined relay payload timestamp {Timestamp}.", payload.Timestamp);
+        }
+
+        if (isNewPayload || staleChanged)
+        {
+            SnapshotChanged?.Invoke(this, new RelaySnapshotEventArgs(state));
+        }
     }
 
     private RelaySnapshotState BuildSnapshotUnsafe()

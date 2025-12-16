@@ -26,7 +26,8 @@ public sealed record MatchStateSnapshot(
     IReadOnlyList<TeamPlayerCountSnapshot> TeamPlayerCounts,
     string? WinnerTeam,
     WinnerReason? WinnerReason,
-    CombinedRelayPayload? LatestCombinedRelayPayload)
+    CombinedRelayPayload? LatestCombinedRelayPayload,
+    RelayStatusSnapshot RelayStatus)
 {
     public static readonly MatchStateSnapshot Default = new(
         MatchId: null,
@@ -48,7 +49,8 @@ public sealed record MatchStateSnapshot(
         TeamPlayerCounts: Array.Empty<TeamPlayerCountSnapshot>(),
         WinnerTeam: null,
         WinnerReason: null,
-        LatestCombinedRelayPayload: null);
+        LatestCombinedRelayPayload: null,
+        RelayStatus: RelayStatusSnapshot.Disabled);
 }
 
 public sealed record TeamPlayerCountSnapshot(string Team, int Alive, int Total)

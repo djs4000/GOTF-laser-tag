@@ -19,7 +19,8 @@ public sealed class RelayMonitorForm : Form
     private readonly RelaySnapshotCache _cache;
     private readonly ILogger<RelayMonitorForm> _logger;
     private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
-    private readonly RelayOptions _relayOptions;
+    private readonly IOptionsMonitor<RelayOptions> _relayOptions;
+    private readonly IDisposable? _optionsReload;
 
     private readonly Label _relayStatusLabel = new() { AutoSize = true };
     private readonly Label _lastUpdatedLabel = new() { AutoSize = true };
@@ -30,12 +31,13 @@ public sealed class RelayMonitorForm : Form
 
     public RelayMonitorForm(
         RelaySnapshotCache cache,
-        IOptions<RelayOptions> relayOptions,
+        IOptionsMonitor<RelayOptions> relayOptions,
         ILogger<RelayMonitorForm> logger)
     {
         _cache = cache;
         _logger = logger;
-        _relayOptions = relayOptions.Value;
+        _relayOptions = relayOptions;
+        _optionsReload = _relayOptions.OnChange(OnRelayOptionsChanged);
 
         Text = "Relay Monitor";
         StartPosition = FormStartPosition.CenterParent;
@@ -82,8 +84,10 @@ public sealed class RelayMonitorForm : Form
         Controls.Add(layout);
 
         Shown += (_, _) => RenderSnapshot(_cache.GetSnapshot());
-        FormClosed += (_, _) => _cache.SnapshotChanged -= OnSnapshotChanged;
+        FormClosed += OnFormClosed;
         _cache.SnapshotChanged += OnSnapshotChanged;
+
+        UpdateRelayStatusLabel(_relayOptions.CurrentValue);
     }
 
     private Control BuildHeaderPanel()
@@ -100,11 +104,6 @@ public sealed class RelayMonitorForm : Form
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 70));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 30));
 
-        _relayStatusLabel.Text = _relayOptions.Enabled
-            ? "Relay Enabled - monitoring downstream payloads."
-            : "Relay Disabled - monitor displays most recent cached payload only.";
-        _relayStatusLabel.ForeColor = _relayOptions.Enabled ? Color.DarkGreen : Color.DarkRed;
-
         _lastUpdatedLabel.Text = "Last updated: awaiting payload";
         _staleLabel.Text = "STALE";
         _staleLabel.ForeColor = Color.DarkRed;
@@ -113,6 +112,8 @@ public sealed class RelayMonitorForm : Form
         panel.SetColumnSpan(_relayStatusLabel, 2);
         panel.Controls.Add(_lastUpdatedLabel, 0, 1);
         panel.Controls.Add(_staleLabel, 1, 1);
+
+        UpdateRelayStatusLabel(_relayOptions.CurrentValue);
 
         return panel;
     }
@@ -258,6 +259,37 @@ public sealed class RelayMonitorForm : Form
             textBox.Invalidate();
             textBox.ResumeLayout();
         }
+    }
+
+    private void OnRelayOptionsChanged(RelayOptions options)
+    {
+        if (!IsHandleCreated)
+        {
+            return;
+        }
+
+        try
+        {
+            BeginInvoke(new Action(() => UpdateRelayStatusLabel(options)));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to update relay monitor header after options change.");
+        }
+    }
+
+    private void UpdateRelayStatusLabel(RelayOptions options)
+    {
+        _relayStatusLabel.Text = options.Enabled
+            ? "Relay Enabled - monitoring downstream payloads."
+            : "Relay Disabled - monitor displays most recent cached payload only.";
+        _relayStatusLabel.ForeColor = options.Enabled ? Color.DarkGreen : Color.DarkRed;
+    }
+
+    private void OnFormClosed(object? sender, FormClosedEventArgs e)
+    {
+        _cache.SnapshotChanged -= OnSnapshotChanged;
+        _optionsReload?.Dispose();
     }
 
     private static TextBox CreateJsonViewer()
