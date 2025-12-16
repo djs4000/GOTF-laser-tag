@@ -32,13 +32,13 @@ public sealed class RelayService : IRelayService, IDisposable
 
         _serializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         _serializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false));
-        _status = RelayStatusSnapshot.Disabled with { Enabled = IsEnabled };
+        _status = RelayStatusSnapshot.Disabled with { Enabled = IsRelayEnabled(_optionsMonitor.CurrentValue) };
         _optionsReloadToken = _optionsMonitor.OnChange(OnOptionsChanged);
     }
 
     public event EventHandler<RelayStatusSnapshotEventArgs>? StatusChanged;
 
-    public bool IsEnabled => IsEnabled(_optionsMonitor.CurrentValue);
+    public bool IsEnabled => IsRelayEnabled(_optionsMonitor.CurrentValue);
 
     public RelayStatusSnapshot Status
     {
@@ -130,7 +130,7 @@ public sealed class RelayService : IRelayService, IDisposable
         }
     }
 
-    private static bool IsEnabled(RelayOptions options)
+    private static bool IsRelayEnabled(RelayOptions options)
     {
         return options.Enabled && !string.IsNullOrWhiteSpace(options.Url);
     }
@@ -139,7 +139,7 @@ public sealed class RelayService : IRelayService, IDisposable
     {
         UpdateStatus(current => current with
         {
-            Enabled = IsEnabled(options),
+            Enabled = IsRelayEnabled(options),
             IsSending = false
         });
     }
@@ -149,7 +149,7 @@ public sealed class RelayService : IRelayService, IDisposable
         var now = DateTimeOffset.UtcNow;
         UpdateStatus(current => current with
         {
-            Enabled = IsEnabled(options),
+            Enabled = IsRelayEnabled(options),
             IsSending = true,
             LastAttemptUtc = now
         });
@@ -162,7 +162,7 @@ public sealed class RelayService : IRelayService, IDisposable
             var attemptTime = recordAttemptTime ? DateTimeOffset.UtcNow : current.LastAttemptUtc;
             return current with
             {
-                Enabled = IsEnabled(options),
+                Enabled = IsRelayEnabled(options),
                 IsSending = false,
                 LastAttemptUtc = attemptTime,
                 LastAttemptSucceeded = recordAttemptTime ? result.Success : current.LastAttemptSucceeded,
