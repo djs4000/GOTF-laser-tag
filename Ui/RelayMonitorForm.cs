@@ -104,7 +104,7 @@ public sealed class RelayMonitorForm : Form
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 70));
         panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 30));
 
-        _lastUpdatedLabel.Text = "Last updated: awaiting payload";
+        _lastUpdatedLabel.Text = "Last outbound: awaiting payload";
         _staleLabel.Text = "STALE";
         _staleLabel.ForeColor = Color.DarkRed;
 
@@ -153,11 +153,11 @@ public sealed class RelayMonitorForm : Form
     {
         if (snapshot.LastUpdatedUtc is { } timestamp)
         {
-            _lastUpdatedLabel.Text = $"Last updated (UTC): {timestamp:u}";
+            _lastUpdatedLabel.Text = $"Last outbound (UTC): {timestamp:u}";
         }
         else
         {
-            _lastUpdatedLabel.Text = "Last updated: awaiting payload";
+            _lastUpdatedLabel.Text = "Last outbound: awaiting payload";
         }
 
         if (snapshot.IsStale)
@@ -171,22 +171,26 @@ public sealed class RelayMonitorForm : Form
             _staleLabel.ForeColor = Color.DarkGreen;
         }
 
-        if (snapshot.Payload is null)
+        var matchMessage = snapshot.LastInboundMatch is null
+            ? "No match payload has been received yet."
+            : JsonSerializer.Serialize(snapshot.LastInboundMatch, _jsonOptions);
+
+        var propMessage = snapshot.LastInboundProp is null
+            ? "No prop payload has been received yet."
+            : JsonSerializer.Serialize(snapshot.LastInboundProp, _jsonOptions);
+
+        UpdateJsonViewer(_matchJson, matchMessage);
+        UpdateJsonViewer(_propJson, propMessage);
+
+        if (snapshot.OutboundPayload is null)
         {
-            const string message = "No payload has been relayed yet.";
-            UpdateJsonViewer(_matchJson, message);
-            UpdateJsonViewer(_propJson, message);
-            UpdateJsonViewer(_combinedJson, message);
-            return;
+            UpdateJsonViewer(_combinedJson, "No outbound payload has been sent yet.");
         }
-
-        var matchJson = JsonSerializer.Serialize(snapshot.Payload.Match, _jsonOptions);
-        var propJson = JsonSerializer.Serialize(snapshot.Payload.Prop, _jsonOptions);
-        var combinedJson = JsonSerializer.Serialize(snapshot.Payload, _jsonOptions);
-
-        UpdateJsonViewer(_matchJson, matchJson);
-        UpdateJsonViewer(_propJson, propJson);
-        UpdateJsonViewer(_combinedJson, combinedJson);
+        else
+        {
+            var combinedJson = JsonSerializer.Serialize(snapshot.OutboundPayload, _jsonOptions);
+            UpdateJsonViewer(_combinedJson, combinedJson);
+        }
     }
 
     private static void UpdateJsonViewer(TextBox textBox, string newText)
