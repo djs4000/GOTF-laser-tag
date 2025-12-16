@@ -91,7 +91,8 @@ public sealed class DebugPayloadService
             throw new DebugPayloadValidationException($"Match payload JSON invalid: {ex.Message}");
         }
 
-        var fallback = _snapshotCache.GetSnapshot().Payload?.Prop ?? BuildPlaceholderProp();
+        var snapshot = _snapshotCache.GetSnapshot();
+        var fallback = snapshot.LastInboundProp ?? snapshot.OutboundPayload?.Prop ?? BuildPlaceholderProp();
         return new CombinedRelayPayload
         {
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
@@ -115,7 +116,8 @@ public sealed class DebugPayloadService
             throw new DebugPayloadValidationException($"Prop payload JSON invalid: {ex.Message}");
         }
 
-        var fallback = _snapshotCache.GetSnapshot().Payload?.Match ?? BuildPlaceholderMatch();
+        var snapshot = _snapshotCache.GetSnapshot();
+        var fallback = snapshot.LastInboundMatch ?? snapshot.OutboundPayload?.Match ?? BuildPlaceholderMatch();
         return new CombinedRelayPayload
         {
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
@@ -128,7 +130,8 @@ public sealed class DebugPayloadService
 
     private string ResolveAttackingTeam()
     {
-        return _snapshotCache.GetSnapshot().Payload?.AttackingTeam ?? "Team 1";
+        var snapshot = _snapshotCache.GetSnapshot();
+        return snapshot.OutboundPayload?.AttackingTeam ?? "Team 1";
     }
 
     private static PropStatusDto BuildPlaceholderProp()
