@@ -354,8 +354,10 @@ public sealed class MatchCoordinator : IDisposable
                 eventTimestamp: dto.Timestamp,
                 overrides: relayOverrides);
 
-            shouldRelayPayload = IsRelayActiveStatus(dto.Status) && !_relayFinalizedForCurrentMatch;
-            if (shouldRelayPayload && relayOverrides.FinalizeRelay)
+            shouldRelayPayload = !_relayFinalizedForCurrentMatch
+                && (IsRelayActiveStatus(dto.Status) || IsRelayTerminalStatus(dto.Status));
+
+            if (shouldRelayPayload && (relayOverrides.FinalizeRelay || IsRelayTerminalStatus(dto.Status)))
             {
                 _relayFinalizedForCurrentMatch = true;
             }
@@ -849,6 +851,11 @@ public sealed class MatchCoordinator : IDisposable
     private static bool IsRelayActiveStatus(MatchSnapshotStatus status)
     {
         return status is MatchSnapshotStatus.WaitingOnStart or MatchSnapshotStatus.Countdown or MatchSnapshotStatus.Running;
+    }
+
+    private static bool IsRelayTerminalStatus(MatchSnapshotStatus status)
+    {
+        return status is MatchSnapshotStatus.Completed or MatchSnapshotStatus.Cancelled;
     }
 
     private void PublishSnapshotLocked(string source, CombinedRelayPayload? combinedRelayPayload = null, long? eventTimestamp = null)
