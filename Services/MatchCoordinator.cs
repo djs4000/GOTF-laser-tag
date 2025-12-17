@@ -22,6 +22,12 @@ public sealed class MatchCoordinator : IDisposable
     private readonly UiAutomationOptions _uiAutomationOptions;
     private readonly TimeSynchronizationService _timeSyncService;
     private readonly object _sync = new();
+    private RelayStatusSnapshot _relayStatus;
+    private CombinedRelayPayload? _latestComputedPayload;
+    private CombinedRelayPayload? _latestOutboundPayload;
+    private DateTimeOffset? _latestOutboundAt;
+    private MatchSnapshotDto? _latestInboundMatch;
+    private PropStatusDto? _latestInboundProp;
 
     private MatchLifecycleState _lifecycleState = MatchLifecycleState.Idle;
     private PropState _propState = PropState.Idle;
@@ -103,6 +109,9 @@ public sealed class MatchCoordinator : IDisposable
         _timeSyncService = timeSyncService;
         _logger = logger;
         _matchOptions = matchOptions.Value;
+        _relayStatus = relayService.Status;
+        _relayService.StatusChanged += OnRelayStatusChanged;
+        CurrentSnapshot = MatchStateSnapshot.Default with { RelayStatus = _relayStatus };
     }
 
     /// <summary>
@@ -142,6 +151,7 @@ public sealed class MatchCoordinator : IDisposable
             _lastPropTimestamp = normalizedTimestampMs;
             _lastPropUpdate = now;
             _lastPropPayload = dto;
+            _latestInboundProp = dto;
             _propState = incomingState;
 
             if (dto.TimerMs is not null)
@@ -280,6 +290,7 @@ public sealed class MatchCoordinator : IDisposable
             _lastSnapshotTimestamp = dto.Timestamp;
             _lastClockUpdate = now;
             _lastSnapshotPayload = dto;
+            _latestInboundMatch = dto;
             _lastMatchRemainingMs = dto.RemainingTimeMs;
 
             _lastElapsedSec = _matchOptions.LtDisplayedDurationSec - (dto.RemainingTimeMs / 1000.0);
@@ -367,6 +378,11 @@ public sealed class MatchCoordinator : IDisposable
 
         if (shouldRelayPayload && relayPayload is not null && _relayService.IsEnabled)
         {
+            lock (_sync)
+            {
+                _latestOutboundPayload = relayPayload;
+                _latestOutboundAt = DateTimeOffset.UtcNow;
+            }
             _ = _relayService.TryRelayCombinedAsync(relayPayload, CancellationToken.None);
         }
 
@@ -395,6 +411,15 @@ public sealed class MatchCoordinator : IDisposable
     /// Provides a defensive copy of the current snapshot without subscription.
     /// </summary>
     public MatchStateSnapshot Snapshot() => CurrentSnapshot;
+
+    private void OnRelayStatusChanged(object? sender, RelayStatusSnapshotEventArgs args)
+    {
+        lock (_sync)
+        {
+            _relayStatus = args.Snapshot;
+            PublishSnapshotLocked("Relay status changed", buildRelayPayloadIfMissing: false);
+        }
+    }
 
     /// <summary>
     /// Allows the operator to start a manual match session for diagnostics.
@@ -446,6 +471,11 @@ public sealed class MatchCoordinator : IDisposable
             _winnerTeam = null;
             _winnerReason = null;
             _relayFinalizedForCurrentMatch = false;
+            _latestComputedPayload = null;
+            _latestOutboundPayload = null;
+            _latestOutboundAt = null;
+            _latestInboundMatch = null;
+            _latestInboundProp = null;
             PublishSnapshotLocked("Idle state");
         }
     }
@@ -858,7 +888,7 @@ public sealed class MatchCoordinator : IDisposable
         return status is MatchSnapshotStatus.Completed or MatchSnapshotStatus.Cancelled;
     }
 
-    private void PublishSnapshotLocked(string source, CombinedRelayPayload? combinedRelayPayload = null, long? eventTimestamp = null)
+    private void PublishSnapshotLocked(string source, CombinedRelayPayload? combinedRelayPayload = null, long? eventTimestamp = null, bool buildRelayPayloadIfMissing = true)
     {
         var now = DateTimeOffset.UtcNow;
         var overtimeActive = _plantTimeSec is not null && _plantTimeSec.Value >= _matchOptions.AutoEndNoPlantAtSec && !_matchEnded;
@@ -872,7 +902,16 @@ public sealed class MatchCoordinator : IDisposable
         var players = _lastSnapshotPayload?.Players ?? Array.Empty<MatchPlayerSnapshotDto>();
         var teamPlayerCounts = BuildTeamPlayerCounts(players);
 
+        if (buildRelayPayloadIfMissing)
+        {
         combinedRelayPayload ??= BuildCombinedPayloadLocked(forceRelay: false, eventTimestamp: eventTimestamp);
+        }
+        else if (combinedRelayPayload is null)
+        {
+            combinedRelayPayload = _latestComputedPayload ?? BuildCombinedPayloadLocked(forceRelay: false, eventTimestamp: eventTimestamp);
+        }
+
+        _latestComputedPayload = combinedRelayPayload;
 
         var snapshot = new MatchStateSnapshot(
             MatchId: _currentMatchId,
@@ -894,7 +933,11 @@ public sealed class MatchCoordinator : IDisposable
             TeamPlayerCounts: teamPlayerCounts,
             WinnerTeam: _winnerTeam ?? combinedRelayPayload.Match.WinnerTeam,
             WinnerReason: combinedRelayPayload.WinnerReason ?? _winnerReason,
-            LatestCombinedRelayPayload: combinedRelayPayload);
+            LatestOutboundRelayPayload: _latestOutboundPayload,
+            LatestOutboundAt: _latestOutboundAt,
+            RelayStatus: _relayStatus,
+            LatestInboundMatchPayload: _latestInboundMatch,
+            LatestInboundPropPayload: _latestInboundProp);
 
         CurrentSnapshot = snapshot;
         SnapshotUpdated?.Invoke(this, snapshot);
@@ -970,6 +1013,7 @@ public sealed class MatchCoordinator : IDisposable
             _lastPropPayload = null;
             _propTimerRemainingMs = null;
             _propTimerSyncedAt = null;
+            _latestInboundProp = null;
         }
 
         _matchEnded = false;
@@ -980,6 +1024,7 @@ public sealed class MatchCoordinator : IDisposable
         _lastActionDescription = preservePropState ? "New match (prop buffered)" : "New match";
         _focusAcquired = false;
         _lastSnapshotPayload = null;
+        _latestInboundMatch = null;
         _propLatencyWindow.Clear();
         _clockLatencyWindow.Clear();
         _propLatencySamplesUntilPublish = 0;
@@ -990,6 +1035,11 @@ public sealed class MatchCoordinator : IDisposable
         _winnerReason = null;
         CancelFinalDataTimeoutLocked();
         _relayFinalizedForCurrentMatch = false;
+        _latestComputedPayload = null;
+        _latestOutboundPayload = null;
+        _latestOutboundAt = null;
+        _latestInboundMatch = null;
+        _latestInboundProp = null;
     }
 
     private static DateTimeOffset ParseSnapshotTimestamp(long timestamp, DateTimeOffset fallback)
@@ -1096,6 +1146,8 @@ public sealed class MatchCoordinator : IDisposable
         {
             CancelFinalDataTimeoutLocked();
         }
+
+        _relayService.StatusChanged -= OnRelayStatusChanged;
     }
 
     private void EnsureFinalDataTimeoutScheduledLocked()

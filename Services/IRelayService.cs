@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using LaserTag.Defusal.Domain;
@@ -10,6 +11,10 @@ namespace LaserTag.Defusal.Services;
 public interface IRelayService
 {
     bool IsEnabled { get; }
+
+    RelayStatusSnapshot Status { get; }
+
+    event EventHandler<RelayStatusSnapshotEventArgs>? StatusChanged;
 
     Task TryRelayCombinedAsync(CombinedRelayPayload payload, CancellationToken cancellationToken);
 

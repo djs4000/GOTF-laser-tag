@@ -168,7 +168,7 @@ public partial class MatchResultForm : Form
 
     private void RenderData(MatchStateSnapshot snapshot, string attackingTeam, string defendingTeam)
     {
-        var combinedPayload = snapshot.LatestCombinedRelayPayload;
+        var combinedPayload = snapshot.LatestOutboundRelayPayload;
         var winner = snapshot.WinnerTeam
             ?? combinedPayload?.Match?.WinnerTeam;
         if (string.IsNullOrWhiteSpace(winner))
